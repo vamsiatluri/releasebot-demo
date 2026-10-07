@@ -100,6 +100,38 @@ failing on the first real release cut). The cost is a few dollars a month.
 copying production secrets into a new account's function configuration by hand,
 which is the thing we would be trying to avoid later anyway.
 
+### ★ The argument that actually wins this one: it is what makes rollback work
+
+Security is the obvious case. The operational case is stronger, and it only shows
+up when you try a rollback on a real deployment.
+
+**A Lambda version freezes code AND configuration together.** So an alias
+rollback rolls back both. Usually that is exactly what you want -- what shipped is
+what was tested, environment included. But it means:
+
+> **After you rotate a secret, every previously published version becomes an
+> unusable rollback target**, because each one still carries the old value.
+
+Proven in the sandbox on 2026-10-07: rolling `cutRelease`'s `live` alias from
+version 5 to version 4 returned HTTP 500 immediately. Version 4 was published
+before the signing secret was set, so it had none, and the function failed during
+startup. Code rollback, configuration rollback, dead service.
+
+Now put that on their cutover. Steps 6, 7 and 8 rotate the Slack signing secret
+and the GitHub token. **Under env-var secrets, the moment that rotation lands,
+the rollback plan silently stops working** -- and nobody finds out until the
+rollback is needed.
+
+Hold a *reference* in the environment instead and the version freezes the
+reference, not the value. Rolling the code back leaves the secret where it is,
+and the rollback plan survives the rotation that the cutover requires.
+
+**Say it in the interview:** *"Config is frozen into the version, so an alias
+rollback rolls config back too. That means rotating a secret quietly invalidates
+every older version as a rollback target. Putting a reference in the environment
+instead of the value fixes it -- which matters most at exactly the moment your
+plan rotates credentials."*
+
 ---
 
 ## 3. Acknowledge Slack in under three seconds — **P0 if it is not already true**

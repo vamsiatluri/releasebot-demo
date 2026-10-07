@@ -101,6 +101,20 @@ aws lambda update-alias --function-name cutRelease --name live --function-versio
 
 Takes effect immediately. No redeploy, no CloudFormation, no S3.
 
+⚠️ **A version freezes configuration as well as code**, so rolling the alias back
+also rolls back that version's environment. Check before you commit to a target:
+
+```bash
+aws lambda get-function-configuration --function-name cutRelease:<N> \
+  --query 'Environment.Variables'
+```
+
+If a secret has been rotated since version `<N>` was published, that version
+carries the OLD value and rolling back to it will fail at startup -- it returns
+HTTP 500 with nothing useful in the logs, because the failure is during init.
+Roll back to a version published *after* the most recent rotation, or resolve
+secrets by reference rather than by value (DESIGN-PROPOSALS #2).
+
 ## Escalation
 
 | | |
