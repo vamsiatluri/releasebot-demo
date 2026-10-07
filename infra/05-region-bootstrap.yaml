@@ -1,0 +1,40 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ReleaseBot - per-REGION prerequisites. Deploy this once in every region that
+  will host the API, BEFORE the API stack.
+
+  ⚠️ Why this is separate from 10-iam.yaml: IAM roles are global to an account,
+  but AWS::ApiGateway::Account is account-AND-REGION scoped. Keeping both in one
+  stack means the second region's deploy fails on duplicate role names, and
+  splitting them the other way means a region silently has no logging. "Account
+  level" in AWS usually means account-level *per region* -- proven the hard way
+  on 2026-10-07, when the API stack in a second region failed with "CloudWatch
+  Logs role ARN must be set in account settings" after the first region had been
+  configured for weeks.
+
+Resources:
+
+  ApiGatewayCloudWatchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      # No RoleName: IAM is global, so a fixed name collides the moment this
+      # template is deployed in a second region. Let CloudFormation generate one.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: apigateway.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs'
+
+  # A singleton per account+region. Owning it from an application stack means
+  # deleting that stack disables logging for every other API in the region, which
+  # is why it lives in a bootstrap stack nobody tears down casually.
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchRole.Arn
+
+Outputs:
+  CloudWatchRoleArn: {Value: !GetAtt ApiGatewayCloudWatchRole.Arn}

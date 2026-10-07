@@ -112,3 +112,65 @@ the captured JSON or the generated template.
 > The part that actually matters is the comparison: during the parallel run,
 > what you want isn't 'production passed', it's 'production and dev gave
 > identical answers'."*
+
+---
+
+# The loop, run end to end
+
+Run on 2026-10-07. `us-east-1` played the source account, `us-west-2` the target —
+two regions in one account rather than two accounts, because **the source has to
+stay up the whole time**, which is exactly what the real parallel run does. Both
+answered their health check throughout; the source was never interrupted.
+
+| Pass | What happened | Differences | Blocking |
+|---|---|---|---|
+| 0 | Capture the source as it actually runs | — | — |
+| 1 | Deploy the generated template as-is → **rejected** | 15 | 7 |
+| 2 | Reference existing identities → **rejected again** | 15 | 7 |
+| 3 | Drop reserved labels, match retention → **deployed** | 9 | 1 |
+| 4 | Hand-write the API → **rejected** | 9 | 1 |
+| 5 | Bootstrap the region first, then the API → **deployed** | **8** | **0** |
+
+**Three of the five passes failed before creating anything. That is the loop
+working**, not the loop struggling — each failure named a real problem that would
+otherwise have surfaced during a cutover window.
+
+## What each failure taught
+
+**Pass 1 — IAM is global, not regional.** The generated template tried to create
+a second set of roles with names that already existed. In a true account-to-account
+migration these would not collide; the lesson that survives is that a generated
+template proposes and a human disposes.
+
+**Pass 2 — the platform reserves some of its own labels.** CloudFormation stamps
+`aws:`-prefixed tags onto everything it creates, and those keys may not be set by
+anyone else. The capture recorded them faithfully, so the generated template tried
+to write back something that is *true of* the account but may not be *written to*
+it. That is the hazard of generated infrastructure code in one sentence. Fixed in
+the capture, not worked around in the template.
+
+**Pass 4 — "account-level" usually means account-level *per region*.** Enabling
+API Gateway request logging needs a role set once per account — and once per
+region. `us-east-1` had been configured for weeks, so the failure in `us-west-2`
+read like a problem with the new API and was not. This produced a real correction:
+`infra/05-region-bootstrap.yaml`, separate from the global IAM stack, because the
+two have different scopes and bundling them breaks the second region.
+
+## Closing to zero *unexplained*, not to zero
+
+Eight differences remain and all eight are deliberate:
+
+- **4 ×** the target's functions belong to a differently-named deployment stack.
+  Of course they do — they were created by the rebuild. A tool that hid this would
+  be hiding the one fact that tells you which build produced a resource.
+- **4 ×** API Gateway execution log groups whose names embed the API's own id.
+  Two exist only in the source, two only in the target. They could not match and
+  should not.
+
+That distinction is the whole point. **The target was never meant to be a
+byte-for-byte clone — it was meant to be a copy whose every departure from the
+original somebody can name.** "Zero differences" would mean the comparison was too
+coarse to be useful.
+
+A management-readable view of the run is published as an artifact, and a copy of
+the page is in `docs/parity-run.html`.

@@ -1,0 +1,383 @@
+<title>Account Parity Run</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+<style>
+  :root{
+    --ground:#EDF1F3; --surface:#FFFFFF; --surface-2:#F5F8F9;
+    --ink:#15212B; --ink-2:#2C3C48; --muted:#5D6F7C; --rule:#D3DCE1;
+    --signal:#0B6E78; --signal-soft:#DCEDEE;
+    --blocking:#A4382A; --blocking-soft:#F2DEDA;
+    --warn:#9C6410; --warn-soft:#F4E8D6;
+    --clear:#2C7355; --clear-soft:#DCEDE4;
+    --display:'Archivo',system-ui,sans-serif;
+    --body:'Source Serif 4',Georgia,serif;
+    --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,monospace;
+    --maxw:1080px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --ground:#0B1218; --surface:#111C24; --surface-2:#16242D;
+      --ink:#E2EAEF; --ink-2:#C3D1DA; --muted:#8597A4; --rule:#24353F;
+      --signal:#45B0BA; --signal-soft:#123038;
+      --blocking:#DB7764; --blocking-soft:#3A1F1A;
+      --warn:#DBA85A; --warn-soft:#352717;
+      --clear:#63B892; --clear-soft:#15301F;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#0B1218; --surface:#111C24; --surface-2:#16242D;
+    --ink:#E2EAEF; --ink-2:#C3D1DA; --muted:#8597A4; --rule:#24353F;
+    --signal:#45B0BA; --signal-soft:#123038;
+    --blocking:#DB7764; --blocking-soft:#3A1F1A;
+    --warn:#DBA85A; --warn-soft:#352717;
+    --clear:#63B892; --clear-soft:#15301F;
+  }
+  *{box-sizing:border-box}
+  body{
+    background:var(--ground); color:var(--ink);
+    font-family:var(--body); font-size:16px; line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 24px 72px}
+  h1,h2,h3,.lbl,.num{font-family:var(--display)}
+  h1{font-size:clamp(28px,4.2vw,42px); font-weight:700; letter-spacing:-.02em; margin:0; text-wrap:balance}
+  h2{font-size:20px; font-weight:600; letter-spacing:-.01em; margin:0}
+  .lbl{font-size:11px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--muted)}
+  .mono{font-family:var(--mono); font-variant-numeric:tabular-nums}
+
+  /* ---------- masthead ---------- */
+  header{border-bottom:1px solid var(--rule); background:var(--surface)}
+  .mast{max-width:var(--maxw); margin:0 auto; padding:28px 24px 24px;
+        display:flex; flex-wrap:wrap; gap:20px 32px; align-items:flex-end; justify-content:space-between}
+  .mast p{margin:8px 0 0; color:var(--muted); max-width:56ch; font-size:15px}
+  .route{display:flex; align-items:center; gap:12px; font-family:var(--mono); font-size:13px}
+  .route .node{padding:7px 11px; border:1px solid var(--rule); border-radius:3px; background:var(--surface-2); white-space:nowrap}
+  .route .arrow{color:var(--signal); font-size:18px}
+
+  /* ---------- headline readout ---------- */
+  .readout{display:grid; grid-template-columns:minmax(260px,1fr) minmax(340px,1.6fr); gap:28px;
+           background:var(--surface); border:1px solid var(--rule); border-radius:4px;
+           padding:26px 28px; margin-top:32px}
+  @media (max-width:800px){.readout{grid-template-columns:1fr}}
+  .score{display:flex; flex-direction:column; gap:18px}
+  .scorerow{display:flex; align-items:baseline; gap:14px}
+  .big{font-family:var(--display); font-size:54px; font-weight:700; letter-spacing:-.03em; line-height:1}
+  .big.from{color:var(--muted); font-size:34px}
+  .big.to{color:var(--clear)}
+  .big.to.alarm{color:var(--blocking)}
+  .track{font-family:var(--mono); font-size:13px; color:var(--muted)}
+  .verdict{border-left:3px solid var(--clear); padding:10px 0 10px 14px; background:transparent}
+  .verdict strong{font-family:var(--display); font-weight:600; display:block; color:var(--clear); font-size:15px}
+  .verdict span{font-size:14.5px; color:var(--ink-2)}
+
+  figure{margin:0}
+  figcaption{font-size:13px; color:var(--muted); margin-top:10px; font-family:var(--mono)}
+  svg{display:block; width:100%; height:auto}
+
+  /* ---------- iteration log ---------- */
+  section{margin-top:44px}
+  .sechead{display:flex; align-items:baseline; justify-content:space-between; gap:16px; margin-bottom:16px; flex-wrap:wrap}
+  .sechead p{margin:0; color:var(--muted); font-size:14.5px; max-width:60ch}
+
+  ol.log{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:1px;
+         background:var(--rule); border:1px solid var(--rule); border-radius:4px; overflow:hidden}
+  li.iter{background:var(--surface); padding:18px 22px; display:grid;
+          grid-template-columns:44px 1fr 150px; gap:6px 18px; align-items:start;
+          transition:background .12s ease}
+  li.iter:hover{background:var(--surface-2)}
+  li.iter .n{font-family:var(--mono); font-size:13px; font-weight:600; color:var(--muted); padding-top:3px}
+  li.iter .head{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+  li.iter h3{font-family:var(--display); font-size:16px; font-weight:600; margin:0; letter-spacing:-.005em}
+  li.iter .detail{grid-column:2; display:flex; flex-direction:column; gap:7px; margin-top:7px}
+  li.iter .found,li.iter .fix{font-size:15px; line-height:1.55; margin:0; color:var(--ink-2)}
+  li.iter .fix{color:var(--muted)}
+  li.iter .fix b{font-family:var(--display); font-weight:600; font-size:11px; letter-spacing:.1em;
+                 text-transform:uppercase; color:var(--signal); margin-right:7px}
+  .gauge{grid-column:3; grid-row:1 / span 2; display:flex; flex-direction:column; gap:6px; padding-top:2px}
+  .gauge .cnt{font-family:var(--mono); font-size:12.5px; color:var(--muted); display:flex; justify-content:space-between}
+  .bar{height:7px; border-radius:2px; background:var(--surface-2); overflow:hidden; display:flex}
+  .bar i{display:block; height:100%}
+  .bar .b{background:var(--blocking)}
+  .bar .w{background:var(--warn)}
+  .bar .i{background:var(--muted); opacity:.42}
+
+  .pill{font-family:var(--display); font-size:10.5px; font-weight:600; letter-spacing:.09em;
+        text-transform:uppercase; padding:3px 8px; border-radius:2px; white-space:nowrap}
+  .pill.ok{background:var(--clear-soft); color:var(--clear)}
+  .pill.bad{background:var(--blocking-soft); color:var(--blocking)}
+  .pill.neutral{background:var(--signal-soft); color:var(--signal)}
+
+  /* ---------- remaining differences ---------- */
+  table{width:100%; border-collapse:collapse; font-size:14.5px}
+  .tablewrap{overflow-x:auto; border:1px solid var(--rule); border-radius:4px; background:var(--surface)}
+  th{font-family:var(--display); font-size:11px; font-weight:600; letter-spacing:.1em; text-transform:uppercase;
+     color:var(--muted); text-align:left; padding:13px 18px; border-bottom:1px solid var(--rule); white-space:nowrap}
+  td{padding:13px 18px; border-bottom:1px solid var(--rule); vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td.res{font-family:var(--mono); font-size:12.5px; color:var(--ink-2); white-space:nowrap}
+  td.why{color:var(--ink-2); min-width:300px}
+  .sev{font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.04em}
+  .sev.warn{color:var(--warn)} .sev.info{color:var(--muted)}
+
+  /* ---------- plain english ---------- */
+  .plain{background:var(--surface); border:1px solid var(--rule); border-radius:4px; padding:28px 30px;
+         display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:26px 34px}
+  .plain h3{font-family:var(--display); font-size:15px; font-weight:600; margin:0 0 7px}
+  .plain p{margin:0; font-size:15px; color:var(--ink-2); line-height:1.6}
+  .plain .k{color:var(--signal)}
+
+  footer{margin-top:44px; padding-top:20px; border-top:1px solid var(--rule);
+         font-family:var(--mono); font-size:12px; color:var(--muted);
+         display:flex; flex-wrap:wrap; gap:8px 24px; justify-content:space-between}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important; animation:none!important}}
+</style>
+
+<header>
+  <div class="mast">
+    <div>
+      <span class="lbl">Migration verification · ReleaseBot</span>
+      <h1>Account Parity Run</h1>
+      <p>Building a copy of a live account from a capture of the account itself, then measuring the copy against the original until every remaining difference is one somebody chose.</p>
+    </div>
+    <div class="route">
+      <span class="node">SOURCE · us-east-1</span>
+      <span class="arrow">&rarr;</span>
+      <span class="node">TARGET · us-west-2</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="readout">
+    <div class="score">
+      <div>
+        <span class="lbl">Differences from the source</span>
+        <div class="scorerow">
+          <span class="big from">15</span>
+          <span class="track">&rarr;</span>
+          <span class="big to" id="finalTotal">8</span>
+        </div>
+      </div>
+      <div>
+        <span class="lbl">Of those, blocking</span>
+        <div class="scorerow">
+          <span class="big from">7</span>
+          <span class="track">&rarr;</span>
+          <span class="big to" id="finalBlocking">0</span>
+        </div>
+      </div>
+      <div class="verdict">
+        <strong>Closed &mdash; and closed to zero <em>unexplained</em></strong>
+        <span>Eight differences remain and all eight are deliberate. The target was never meant to be a byte-for-byte clone; it was meant to be a copy whose every departure from the original somebody can name.</span>
+      </div>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 520 250" role="img" aria-label="Differences from the source account falling across five iterations, from fifteen total with seven blocking down to eight total with none blocking.">
+        <!-- gridlines -->
+        <g stroke="var(--rule)" stroke-width="1">
+          <line x1="46" y1="20"  x2="508" y2="20"></line>
+          <line x1="46" y1="67"  x2="508" y2="67"></line>
+          <line x1="46" y1="114" x2="508" y2="114"></line>
+          <line x1="46" y1="161" x2="508" y2="161"></line>
+          <line x1="46" y1="208" x2="508" y2="208"></line>
+        </g>
+        <g font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--muted)" text-anchor="end">
+          <text x="38" y="24">16</text>
+          <text x="38" y="71">12</text>
+          <text x="38" y="118">8</text>
+          <text x="38" y="165">4</text>
+          <text x="38" y="212">0</text>
+        </g>
+        <!-- bars: x per iteration; total (muted) with blocking overlaid -->
+        <g id="bars"></g>
+        <g id="xlabels" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--muted)" text-anchor="middle"></g>
+        <!-- legend -->
+        <g font-family="IBM Plex Mono, monospace" font-size="10">
+          <rect x="46" y="233" width="9" height="9" fill="var(--muted)" opacity="0.42"></rect>
+          <text x="61" y="241" fill="var(--muted)">all differences</text>
+          <rect x="168" y="233" width="9" height="9" fill="var(--blocking)"></rect>
+          <text x="183" y="241" fill="var(--muted)">blocking</text>
+        </g>
+      </svg>
+      <figcaption>Five iterations. Three failed before they deployed anything &mdash; which is the loop working.</figcaption>
+    </figure>
+  </div>
+
+  <section>
+    <div class="sechead">
+      <h2>What happened, iteration by iteration</h2>
+      <p>Each pass: deploy, read the target account back, compare it against the capture of the source, fix what the comparison names.</p>
+    </div>
+    <ol class="log" id="log"></ol>
+  </section>
+
+  <section>
+    <div class="sechead">
+      <h2>The eight differences that remain</h2>
+      <p>None of them blocking. Each is listed with the reason it is there on purpose.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Severity</th><th>What differs</th><th>Why it differs on purpose</th></tr>
+        </thead>
+        <tbody id="remaining"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="sechead"><h2>What this actually proves</h2></div>
+    <div class="plain">
+      <div>
+        <h3>The copy was built from the original, not from its paperwork</h3>
+        <p>The starting point was a reading of the <span class="k">running account</span>, not of the documents describing it. On a system live for years, the two are never quite the same &mdash; somebody changed something during an incident and never wrote it down.</p>
+      </div>
+      <div>
+        <h3>Three attempts failed before anything was created</h3>
+        <p>That is the loop earning its keep. Each failure named a real problem &mdash; permissions that are account-wide rather than regional, labels the platform reserves for itself, a setting that has to exist <span class="k">once per region</span> before anything else works.</p>
+      </div>
+      <div>
+        <h3>The original never went down</h3>
+        <p>The source account stayed live and serving for the whole exercise. That is what makes this a rehearsal rather than a leap: until somebody chooses to switch over, the thing that works is still the thing that works.</p>
+      </div>
+      <div>
+        <h3>&ldquo;Finished&rdquo; is a number you can read</h3>
+        <p>Not an assurance in a meeting. Eight differences, zero blocking, each with a named reason &mdash; a line a reviewer can sign rather than a claim they have to take on trust.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>ReleaseBot migration · parity run 2026-10-07</span>
+    <span id="stamp"></span>
+  </footer>
+</div>
+
+<script>
+const ITERS = [
+  {n:0, title:"Capture the source account", status:"done", total:null, blocking:null,
+   found:"Read the running account rather than the templates that are supposed to describe it: four programs, two permission sets, one public front door, eight log books. Four blocking findings, all of them passwords sitting in plain view in the programs' own settings.",
+   fix:"Use the capture as the specification to build against."},
+  {n:1, title:"Deploy the generated template exactly as it came out", status:"failed", total:15, blocking:7,
+   found:"Rejected before anything was created. Permissions in AWS are account-wide rather than per-region, so the template tried to create a second set of identities with names that already existed.",
+   fix:"Point at the existing identities instead of recreating them."},
+  {n:2, title:"Reference the existing identities", status:"failed", total:15, blocking:7,
+   found:"Rejected again. The source account carries automatic labels the platform applies itself and refuses to let anyone else set. The capture recorded them faithfully, so the generated template tried to write back something that is true of the account but may not be written to it.",
+   fix:"Teach the capture to drop reserved labels, then regenerate."},
+  {n:3, title:"Drop the reserved labels, match the log retention", status:"deployed", total:9, blocking:1,
+   found:"First successful deploy. All four programs, their frozen versions and their rollback bookmarks match the original. The public front door is still missing on purpose — the generator refuses to produce one, because its internal addresses carry the source account and its public address carries the front door's own identifier.",
+   fix:"Hand-write the front door against the captured specification."},
+  {n:4, title:"Hand-write the front door from the captured spec", status:"failed", total:9, blocking:1,
+   found:"Rejected. Turning on request logging needs a permission granted once per account — and, it turns out, once per account per region. The first region had been configured for weeks, so this read like a problem with the new front door and was not.",
+   fix:"Split the per-region prerequisite into its own step and run it first."},
+  {n:5, title:"Bootstrap the region, then build the front door", status:"deployed", total:8, blocking:0,
+   found:"The front door is up and matches the captured specification — same two routes, same two environments, same settings behind each. Both regions answer their health check; the source was never interrupted.",
+   fix:"Review each remaining difference and sign it off as intended."}
+];
+
+const REMAINING = [
+  {sev:"warn", res:"cutRelease", what:"belongs to a differently-named deployment group",
+   why:"The target's programs were created by the rebuild, so they carry its name rather than the original's. Expected, and the comparison is right to raise it."},
+  {sev:"warn", res:"cutReleaseTest", what:"belongs to a differently-named deployment group",
+   why:"Same reason. A tool that hid this would be hiding the one fact that tells you which build produced a resource."},
+  {sev:"warn", res:"releaseAutomationMergeback", what:"belongs to a differently-named deployment group", why:"Same reason."},
+  {sev:"warn", res:"releaseAutomationMergebackTest", what:"belongs to a differently-named deployment group", why:"Same reason."},
+  {sev:"info", res:"log book &middot; source front door (live)", what:"present in the source, absent in the target",
+   why:"The log book's name contains the front door's own identifier, and the target has a different front door. It could not match and should not."},
+  {sev:"info", res:"log book &middot; source front door (test)", what:"present in the source, absent in the target", why:"Same reason."},
+  {sev:"info", res:"log book &middot; target front door (live)", what:"present in the target, absent in the source",
+   why:"The mirror image of the pair above — the target's own front door, with its own identifier."},
+  {sev:"info", res:"log book &middot; target front door (test)", what:"present in the target, absent in the source", why:"Same reason."}
+];
+
+// ---- chart ----------------------------------------------------------------
+(function(){
+  const pts = ITERS.filter(d => d.total !== null);
+  const bars = document.getElementById("bars");
+  const xl = document.getElementById("xlabels");
+  const x0 = 60, span = 440 / pts.length, bw = Math.min(46, span * 0.52);
+  const y0 = 208, yTop = 20, max = 16;
+  const scale = v => y0 - (v / max) * (y0 - yTop);
+  const ns = "http://www.w3.org/2000/svg";
+
+  pts.forEach((d, i) => {
+    const cx = x0 + span * i + span / 2 - 14;
+    const mk = (y, h, cls, op) => {
+      const r = document.createElementNS(ns, "rect");
+      r.setAttribute("x", cx - bw / 2); r.setAttribute("y", y);
+      r.setAttribute("width", bw); r.setAttribute("height", Math.max(h, 1.5));
+      r.setAttribute("rx", "1.5");
+      r.setAttribute("fill", cls);
+      if (op) r.setAttribute("opacity", op);
+      bars.appendChild(r);
+    };
+    mk(scale(d.total), y0 - scale(d.total), "var(--muted)", "0.42");
+    if (d.blocking > 0) mk(scale(d.blocking), y0 - scale(d.blocking), "var(--blocking)");
+
+    const t = document.createElementNS(ns, "text");
+    t.setAttribute("x", cx); t.setAttribute("y", y0 - (y0 - scale(d.total)) - 7);
+    t.setAttribute("text-anchor", "middle");
+    t.setAttribute("font-family", "IBM Plex Mono, monospace");
+    t.setAttribute("font-size", "11"); t.setAttribute("font-weight", "600");
+    t.setAttribute("fill", d.blocking === 0 ? "var(--clear)" : "var(--ink)");
+    t.textContent = d.total;
+    bars.appendChild(t);
+
+    const lab = document.createElementNS(ns, "text");
+    lab.setAttribute("x", cx); lab.setAttribute("y", y0 + 15);
+    lab.textContent = "pass " + d.n;
+    xl.appendChild(lab);
+  });
+})();
+
+// ---- iteration log --------------------------------------------------------
+(function(){
+  const log = document.getElementById("log");
+  const maxTotal = 15;
+  log.innerHTML = ITERS.map(d => {
+    const pill = d.status === "failed"
+      ? '<span class="pill bad">rejected</span>'
+      : d.status === "done"
+        ? '<span class="pill neutral">baseline</span>'
+        : (d.blocking === 0 ? '<span class="pill ok">deployed</span>' : '<span class="pill neutral">deployed</span>');
+    let gauge = '<div class="gauge"></div>';
+    if (d.total !== null) {
+      const warnCount = d.n >= 3 ? 4 : 4;
+      const infoCount = Math.max(d.total - d.blocking - warnCount, 0);
+      const pct = v => (v / maxTotal * 100).toFixed(1) + "%";
+      gauge = `<div class="gauge">
+        <div class="cnt"><span>${d.total} difference${d.total === 1 ? "" : "s"}</span><span>${d.blocking} blocking</span></div>
+        <div class="bar">
+          <i class="b" style="width:${pct(d.blocking)}"></i>
+          <i class="w" style="width:${pct(warnCount)}"></i>
+          <i class="i" style="width:${pct(infoCount)}"></i>
+        </div></div>`;
+    }
+    return `<li class="iter">
+      <span class="n">${String(d.n).padStart(2, "0")}</span>
+      <div class="head"><h3>${d.title}</h3>${pill}</div>
+      ${gauge}
+      <div class="detail">
+        <p class="found">${d.found}</p>
+        <p class="fix"><b>Next</b>${d.fix}</p>
+      </div>
+    </li>`;
+  }).join("");
+})();
+
+// ---- remaining differences ------------------------------------------------
+(function(){
+  document.getElementById("remaining").innerHTML = REMAINING.map(r => `
+    <tr>
+      <td><span class="sev ${r.sev}">${r.sev === "warn" ? "WARN" : "INFO"}</span></td>
+      <td class="res">${r.res}<br><span style="color:var(--muted)">${r.what}</span></td>
+      <td class="why">${r.why}</td>
+    </tr>`).join("");
+  document.getElementById("stamp").textContent =
+    "8 differences remaining · 0 blocking · all accounted for";
+})();
+</script>

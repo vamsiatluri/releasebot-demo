@@ -216,7 +216,23 @@ func (c *Capturer) captureFunctions(b *Baseline, owners map[string]string) error
 		var tags struct{ Tags map[string]string }
 		arn := fmt.Sprintf("arn:aws:lambda:%s:%s:function:%s", b.Region, b.Account, f.FunctionName)
 		if err := c.aws(&tags, "lambda", "list-tags", "--resource", arn); err == nil {
-			fn.Tags = tags.Tags
+			for k, v := range tags.Tags {
+				// ⚠️ Drop `aws:`-prefixed tags. CloudFormation stamps tags like
+				// aws:cloudformation:stack-name onto everything it creates, and
+				// those keys are RESERVED -- a template that tries to set one is
+				// rejected with "aws: prefixed tag key names are not allowed for
+				// external use". So a capture that records them faithfully
+				// produces a template that cannot deploy.
+				//
+				// This is the whole hazard of generated infrastructure code in
+				// one line: the source account's state includes things that are
+				// true OF it but may not be written TO it. Found by deploying a
+				// generated template for real, 2026-10-07.
+				if strings.HasPrefix(strings.ToLower(k), "aws:") {
+					continue
+				}
+				fn.Tags[k] = v
+			}
 		}
 
 		b.Functions = append(b.Functions, fn)
