@@ -47,6 +47,9 @@ change is required and approved."*
 | `infra/20-lambda.yaml` | The four functions, versions, `live` aliases, log groups, alarms. |
 | `infra/30-apigw.yaml` | REST API, two stages wired to aliases through stage variables, access logging, custom domain. |
 | `.github/workflows/deploy.yml` | Build once, deploy to both accounts, verify the deployed bytes, smoke test. |
+| `cmd/baseline` | Reads a running account into something you can review, diff and regenerate from. Never reads secret values. |
+| `cmd/contracttest` | The behaviour suite, run unchanged against localhost, a deployed stage, or both accounts. |
+| `scripts/sandbox-up.sh` / `-down.sh` | Build the whole system in an empty account; destroy it and prove it is gone. |
 | `docs/` | The migration plan, the cutover checklist, the rollback, the runbook, and the design proposals. |
 
 ## Start with these
