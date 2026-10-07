@@ -1,0 +1,10 @@
+[
+  {"ParameterKey": "ArtifactBucket",      "ParameterValue": "releasebot-artifacts-PROD_ACCOUNT_ID"},
+  {"ParameterKey": "CutReleaseRoleArn",   "ParameterValue": "arn:aws:iam::PROD_ACCOUNT_ID:role/releasebot-exec-cutrelease"},
+  {"ParameterKey": "MergebackRoleArn",    "ParameterValue": "arn:aws:iam::PROD_ACCOUNT_ID:role/releasebot-exec-mergeback"},
+  {"ParameterKey": "DefaultOwner",        "ParameterValue": "msnbc"},
+  {"ParameterKey": "SlackChannel",        "ParameterValue": "C0RELEASE"},
+  {"ParameterKey": "SecretsPrefix",       "ParameterValue": "releasebot"},
+  {"ParameterKey": "LogRetentionDays",    "ParameterValue": "30"},
+  {"ParameterKey": "Runtime",             "ParameterValue": "provided.al2"}
+]

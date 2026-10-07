@@ -1,0 +1,249 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ReleaseBot - edge. REST API with the SOW's two routes and two stages, plus the
+  piece that makes a second account migration cheap next time: a custom domain,
+  so the URL Slack and Jira point at is OURS and does not change when the
+  underlying API id does.
+
+Parameters:
+  CutReleaseAliasArn:      {Type: String}
+  CutReleaseTestAliasArn:  {Type: String}
+  MergebackAliasArn:       {Type: String}
+  MergebackTestAliasArn:   {Type: String}
+  DomainName:
+    Type: String
+    Default: ''
+    Description: e.g. releasebot.msnbc.example. Empty skips the custom domain.
+  CertificateArn:
+    Type: String
+    Default: ''
+  ThrottleRateLimit:       {Type: Number, Default: 10}
+  ThrottleBurstLimit:      {Type: Number, Default: 20}
+  AccessLogRetentionDays:  {Type: Number, Default: 30}
+
+Conditions:
+  HasDomain: !And
+    - !Not [!Equals [!Ref DomainName, '']]
+    - !Not [!Equals [!Ref CertificateArn, '']]
+
+Resources:
+
+  Api:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: releasebot
+      Description: ReleaseBot (Robbie) release automation
+      EndpointConfiguration: {Types: [REGIONAL]}
+      # Slack posts form-encoded text; leaving binary media types unset means
+      # API Gateway delivers it as a plain string and the HMAC is computed over
+      # exactly the bytes Slack signed.
+
+  BetaResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref Api
+      ParentId: !GetAtt Api.RootResourceId
+      PathPart: beta
+
+  CutResource:
+    Type: AWS::ApiGateway::Resource
+    Properties: {RestApiId: !Ref Api, ParentId: !Ref BetaResource, PathPart: cut}
+
+  MergeResource:
+    Type: AWS::ApiGateway::Resource
+    Properties: {RestApiId: !Ref Api, ParentId: !Ref BetaResource, PathPart: merge}
+
+  HealthResource:
+    Type: AWS::ApiGateway::Resource
+    Properties: {RestApiId: !Ref Api, ParentId: !Ref BetaResource, PathPart: health}
+
+  # The integration URI resolves ${stageVariables.lambdaArn} at request time.
+  # That is what lets ONE deployment serve both stages: the prod stage points at
+  # the prod alias, the test stage at the test alias, and promoting is a stage
+  # variable change -- no redeploy, no second API, no drift between them.
+  CutMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref Api
+      ResourceId: !Ref CutResource
+      HttpMethod: POST
+      AuthorizationType: NONE   # Slack signs the request; see internal/slackverify
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${!stageVariables.cutArn}/invocations'
+
+  MergeMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref Api
+      ResourceId: !Ref MergeResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${!stageVariables.mergeArn}/invocations'
+
+  HealthMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref Api
+      ResourceId: !Ref HealthResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${!stageVariables.cutArn}/invocations'
+
+  Deployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: [CutMethod, MergeMethod, HealthMethod]
+    Properties:
+      RestApiId: !Ref Api
+
+  AccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/apigateway/releasebot
+      RetentionInDays: !Ref AccessLogRetentionDays
+
+  ProdStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref Api
+      DeploymentId: !Ref Deployment
+      StageName: prod
+      Variables:
+        cutArn: !Ref CutReleaseAliasArn
+        mergeArn: !Ref MergebackAliasArn
+      TracingEnabled: true
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          ThrottlingRateLimit: !Ref ThrottleRateLimit
+          ThrottlingBurstLimit: !Ref ThrottleBurstLimit
+          # INFO, not full request/response logging. DataTraceEnabled writes
+          # request bodies to CloudWatch, and ReleaseBot's request bodies carry
+          # Slack tokens.
+          LoggingLevel: INFO
+          DataTraceEnabled: false
+          MetricsEnabled: true
+      AccessLogSetting:
+        DestinationArn: !GetAtt AccessLogGroup.Arn
+        Format: >-
+          {"requestId":"$context.requestId","ip":"$context.identity.sourceIp",
+          "caller":"$context.identity.userAgent","requestTime":"$context.requestTime",
+          "httpMethod":"$context.httpMethod","path":"$context.path",
+          "status":"$context.status","latency":"$context.responseLatency",
+          "integrationStatus":"$context.integration.status","stage":"$context.stage"}
+
+  TestStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref Api
+      DeploymentId: !Ref Deployment
+      StageName: test
+      Variables:
+        cutArn: !Ref CutReleaseTestAliasArn
+        mergeArn: !Ref MergebackTestAliasArn
+      TracingEnabled: true
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          ThrottlingRateLimit: !Ref ThrottleRateLimit
+          ThrottlingBurstLimit: !Ref ThrottleBurstLimit
+          LoggingLevel: INFO
+          DataTraceEnabled: false
+          MetricsEnabled: true
+      AccessLogSetting:
+        DestinationArn: !GetAtt AccessLogGroup.Arn
+        Format: >-
+          {"requestId":"$context.requestId","ip":"$context.identity.sourceIp",
+          "requestTime":"$context.requestTime","httpMethod":"$context.httpMethod",
+          "path":"$context.path","status":"$context.status",
+          "latency":"$context.responseLatency","stage":"$context.stage"}
+
+  # Permission is granted per ALIAS ARN. Granting it on the unqualified function
+  # ARN would let the API invoke $LATEST, which is the one version no deploy
+  # gate has ever looked at.
+  CutInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CutReleaseAliasArn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*/*/*'
+
+  CutTestInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CutReleaseTestAliasArn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*/*/*'
+
+  MergeInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MergebackAliasArn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*/*/*'
+
+  MergeTestInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MergebackTestAliasArn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*/*/*'
+
+  # --- Stable URL ---------------------------------------------------------
+  # The single biggest avoidable cost of this migration is that the invoke URL
+  # changes: https://{apiId}.execute-api.{region}.amazonaws.com/beta/cut has the
+  # account's API id baked into it, so every Slack slash command, every Jira
+  # webhook and every runbook that references it has to be edited at cutover.
+  # A custom domain means the next move is a base-path remap, and the rollback
+  # is the same remap in reverse.
+  Domain:
+    Type: AWS::ApiGateway::DomainName
+    Condition: HasDomain
+    Properties:
+      DomainName: !Ref DomainName
+      RegionalCertificateArn: !Ref CertificateArn
+      EndpointConfiguration: {Types: [REGIONAL]}
+      SecurityPolicy: TLS_1_2
+
+  ProdMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    Condition: HasDomain
+    DependsOn: ProdStage
+    Properties:
+      DomainName: !Ref Domain
+      RestApiId: !Ref Api
+      Stage: prod
+      BasePath: beta
+
+  TestMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    Condition: HasDomain
+    DependsOn: TestStage
+    Properties:
+      DomainName: !Ref Domain
+      RestApiId: !Ref Api
+      Stage: test
+      BasePath: beta-test
+
+Outputs:
+  ProdInvokeUrl:
+    Value: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com/prod'
+  TestInvokeUrl:
+    Value: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com/test'
+  CustomDomainTarget:
+    Condition: HasDomain
+    Value: !GetAtt Domain.RegionalDomainName
+  SlackRequestUrlProd:
+    Description: Paste this into the Slack app's slash command Request URL at cutover.
+    Value: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com/prod/beta/cut'

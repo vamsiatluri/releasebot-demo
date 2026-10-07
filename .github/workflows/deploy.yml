@@ -1,0 +1,227 @@
+name: deploy
+
+# ReleaseBot deployment, written for the migration's parallel-run window.
+#
+# The shape that matters: BUILD ONCE, DEPLOY MANY. A single artifact is built,
+# checksummed, and uploaded; both accounts then deploy that exact object. If
+# each account built its own zip, "the two accounts behave identically" would be
+# an assertion rather than a fact, and the whole point of the validation period
+# is to turn it into a fact.
+#
+# `migration_phase` is the one knob:
+#   dev-only   - before the production account exists
+#   parallel   - both accounts deployed; dev is still the system of operation
+#   prod-only  - after cutover; dev is no longer deployed to (step 7)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      migration_phase:
+        type: choice
+        options: [dev-only, parallel, prod-only]
+        default: parallel
+
+permissions:
+  contents: read
+  id-token: write      # required for OIDC; without it the role assume fails
+                       # with a confusing "Not authorized to perform
+                       # sts:AssumeRoleWithWebIdentity"
+
+env:
+  AWS_REGION: us-east-1
+  PHASE: ${{ github.event.inputs.migration_phase || 'parallel' }}
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+      cut_digest: ${{ steps.digest.outputs.cut }}
+      merge_digest: ${{ steps.digest.outputs.merge }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.22', cache: true}
+
+      - name: Unit tests
+        run: go test ./... -count=1
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build and package
+        run: make package
+
+      - id: meta
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      # The digest is the artifact's identity. It is compared against the
+      # deployed CodeSha256 after every deploy, in every account, which is what
+      # makes "both accounts are running the same code" verifiable rather than
+      # assumed.
+      - id: digest
+        run: |
+          echo "cut=$(openssl dgst -sha256 -binary build/cutrelease.zip | base64)"   >> "$GITHUB_OUTPUT"
+          echo "merge=$(openssl dgst -sha256 -binary build/mergeback.zip | base64)"  >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: releasebot-${{ steps.meta.outputs.sha }}
+          path: build/*.zip
+          retention-days: 30
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      # fail-fast off on purpose: during the parallel window a production
+      # failure must not cancel the dev deploy that is still serving traffic.
+      fail-fast: false
+      matrix:
+        account: [dev, prod]
+    environment: ${{ matrix.account == 'prod' && 'production' || 'development' }}
+    steps:
+      - name: Skip accounts this phase does not deploy to
+        id: gate
+        run: |
+          case "$PHASE:${{ matrix.account }}" in
+            dev-only:prod|prod-only:dev) echo "run=false" >> "$GITHUB_OUTPUT" ;;
+            *)                           echo "run=true"  >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == 'true'
+
+      - uses: actions/download-artifact@v4
+        if: steps.gate.outputs.run == 'true'
+        with: {name: releasebot-${{ needs.build.outputs.sha }}, path: build}
+
+      # No AWS access keys in repository secrets. The only secret here is a role
+      # ARN, which is not a credential -- it is useless without the OIDC trust
+      # policy in infra/10-iam.yaml naming this repo and branch.
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: steps.gate.outputs.run == 'true'
+        with:
+          role-to-assume: ${{ matrix.account == 'prod' && secrets.PROD_DEPLOY_ROLE_ARN || secrets.DEV_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: releasebot-deploy-${{ github.run_id }}
+
+      - name: Confirm which account we are actually in
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          ACTUAL=$(aws sts get-caller-identity --query Account --output text)
+          EXPECTED="${{ matrix.account == 'prod' && vars.PROD_ACCOUNT_ID || vars.DEV_ACCOUNT_ID }}"
+          echo "authenticated to $ACTUAL (expected $EXPECTED)"
+          [ "$ACTUAL" = "$EXPECTED" ] || { echo "::error::wrong AWS account"; exit 1; }
+
+      - name: Upload artifacts
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          BUCKET="releasebot-artifacts-$(aws sts get-caller-identity --query Account --output text)"
+          for f in cutrelease mergeback; do
+            aws s3 cp "build/$f.zip" "s3://$BUCKET/releasebot/${{ needs.build.outputs.sha }}/$f.zip"
+          done
+
+      - name: Update function code and publish a version
+        if: steps.gate.outputs.run == 'true'
+        id: publish
+        run: |
+          set -euo pipefail
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET="releasebot-artifacts-$ACCOUNT"
+          KEY_PREFIX="releasebot/${{ needs.build.outputs.sha }}"
+
+          publish() {  # $1 function name, $2 artifact base name
+            aws lambda update-function-code \
+              --function-name "$1" --s3-bucket "$BUCKET" --s3-key "$KEY_PREFIX/$2.zip" \
+              --publish --no-cli-pager --query Version --output text
+          }
+          # update-function-code returns before the update is applied; a
+          # publish-version or alias update issued immediately afterwards fails
+          # with ResourceConflictException. Waiting is not optional.
+          settle() { aws lambda wait function-updated-v2 --function-name "$1"; }
+
+          for pair in "cutRelease:cutrelease" "cutReleaseTest:cutrelease" \
+                      "releaseAutomationMergeback:mergeback" "releaseAutomationMergebackTest:mergeback"; do
+            FN="${pair%%:*}"; ART="${pair##*:}"
+            V=$(publish "$FN" "$ART"); settle "$FN"
+            aws lambda update-alias --function-name "$FN" --name live \
+              --function-version "$V" --no-cli-pager >/dev/null
+            echo "$FN -> version $V (alias live)"
+          done
+
+      - name: Verify the deployed bytes match what we built
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          check() {
+            DEPLOYED=$(aws lambda get-function-configuration \
+              --function-name "$1:live" --query CodeSha256 --output text)
+            [ "$DEPLOYED" = "$2" ] || {
+              echo "::error::$1:live is running $DEPLOYED, expected $2"; exit 1; }
+            echo "ok: $1:live == $2"
+          }
+          check cutRelease                        '${{ needs.build.outputs.cut_digest }}'
+          check cutReleaseTest                    '${{ needs.build.outputs.cut_digest }}'
+          check releaseAutomationMergeback        '${{ needs.build.outputs.merge_digest }}'
+          check releaseAutomationMergebackTest    '${{ needs.build.outputs.merge_digest }}'
+
+      - name: Smoke test
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          # Invokes the health path, which returns the function's resolved env
+          # and cuts nothing. A smoke test that cuts a real release branch is
+          # not a smoke test.
+          for FN in cutRelease releaseAutomationMergeback; do
+            aws lambda invoke --function-name "$FN:live" \
+              --payload '{"path":"/beta/health","httpMethod":"GET","headers":{},"requestContext":{"stage":"smoke"}}' \
+              --cli-binary-format raw-in-base64-out /tmp/out.json --no-cli-pager >/dev/null
+            cat /tmp/out.json; echo
+            grep -q '"ok":true' /tmp/out.json || { echo "::error::$FN health check failed"; exit 1; }
+          done
+
+      - name: Record the deploy
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          {
+            echo "### ReleaseBot deployed to \`${{ matrix.account }}\`"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| commit | \`${{ needs.build.outputs.sha }}\` |"
+            echo "| phase | \`$PHASE\` |"
+            echo "| cutRelease CodeSha256 | \`${{ needs.build.outputs.cut_digest }}\` |"
+            echo "| mergeback CodeSha256 | \`${{ needs.build.outputs.merge_digest }}\` |"
+            echo ""
+            echo "System of operation this phase: **$([ "$PHASE" = prod-only ] && echo prod || echo dev)**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # One job, after both accounts, whose only purpose is to make the split-brain
+  # risk visible. During the parallel window both accounts hold a live bot with
+  # a real GitHub token. Exactly one of them may be wired to Slack and Jira.
+  parallel-run-guard:
+    needs: [build, deploy]
+    if: ${{ always() && (github.event.inputs.migration_phase || 'parallel') == 'parallel' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remind, loudly
+        run: |
+          {
+            echo "### :warning: Parallel run active"
+            echo ""
+            echo "Two deployed copies of ReleaseBot hold write access to the same repositories."
+            echo "Only the **dev** account's API may be referenced by:"
+            echo ""
+            echo "- the Slack app's slash command Request URL"
+            echo "- the Slack interactivity Request URL"
+            echo "- the Jira webhook URL"
+            echo ""
+            echo "The production copy is validated by **direct invoke and its own test stage only**"
+            echo "until the cutover checklist is signed off. See docs/CUTOVER.md."
+          } >> "$GITHUB_STEP_SUMMARY"

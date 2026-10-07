@@ -1,0 +1,305 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ReleaseBot - compute. The four functions named in the SOW, on a provided.al2023
+  Go custom runtime, each fronted by a `live` alias so that a deploy publishes an
+  immutable version and a rollback is one UpdateAlias call rather than a rebuild.
+
+Parameters:
+  ArtifactBucket:     {Type: String}
+  CutReleaseKey:      {Type: String, Default: 'releasebot/cutrelease.zip'}
+  MergebackKey:       {Type: String, Default: 'releasebot/mergeback.zip'}
+  CutReleaseRoleArn:  {Type: String}
+  MergebackRoleArn:   {Type: String}
+  RarcConfigUrl:      {Type: String, Default: ''}
+  DefaultOwner:       {Type: String, Default: 'msnbc'}
+  SlackChannel:       {Type: String, Default: ''}
+  SecretsPrefix:      {Type: String, Default: 'releasebot'}
+  LogRetentionDays:   {Type: Number, Default: 30}
+  AlarmTopicArn:      {Type: String, Default: ''}
+  DatadogExtensionArn:
+    Type: String
+    Default: ''
+    Description: >
+      Datadog Extension layer ARN. Left empty the functions still emit
+      structured JSON to CloudWatch and MONITORING| metric lines, so
+      observability is never gated on the vendor layer being resolvable.
+  Runtime:
+    Type: String
+    Default: provided.al2023
+    AllowedValues: [provided.al2, provided.al2023]
+    Description: >
+      The SOW says provided.al2. al2023 is the current generation and the same
+      bootstrap contract; keeping both allowed makes the runtime bump an
+      explicit, separately-approved parameter change rather than a surprise
+      bundled into the migration.
+
+Conditions:
+  HasDatadog:  !Not [!Equals [!Ref DatadogExtensionArn, '']]
+  HasAlarms:   !Not [!Equals [!Ref AlarmTopicArn, '']]
+
+# Env vars below hold REFERENCES to secrets (a Secrets Manager name prefix),
+# never secret values. Anyone holding lambda:GetFunctionConfiguration can read a
+# function's entire environment, and that is a far wider group than the one that
+# should be able to read a GitHub token with branch-write rights on the news org.
+Resources:
+
+  # Log groups are declared, not left to Lambda's implicit creation. An implicit
+  # group is created with NEVER EXPIRE retention and is not owned by the stack,
+  # so it survives the decommission step and keeps billing for storage on an
+  # application nobody can invoke any more.
+  CutReleaseLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/cutRelease
+      RetentionInDays: !Ref LogRetentionDays
+  CutReleaseTestLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/cutReleaseTest
+      RetentionInDays: !Ref LogRetentionDays
+  MergebackLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/releaseAutomationMergeback
+      RetentionInDays: !Ref LogRetentionDays
+  MergebackTestLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/releaseAutomationMergebackTest
+      RetentionInDays: !Ref LogRetentionDays
+
+  CutRelease:
+    Type: AWS::Lambda::Function
+    DependsOn: CutReleaseLogGroup
+    Properties:
+      FunctionName: cutRelease           # name preserved per the SOW
+      Runtime: !Ref Runtime
+      Handler: bootstrap                 # ignored by provided.*, required by the API
+      Architectures: [x86_64]
+      Role: !Ref CutReleaseRoleArn
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref CutReleaseKey}
+      MemorySize: 512
+      Timeout: 30
+      # A release-cutting bot should never be able to run 1,000 copies of
+      # itself. This also caps the blast radius of a retry storm from Jira.
+      ReservedConcurrentExecutions: 5
+      Layers: !If [HasDatadog, [!Ref DatadogExtensionArn], !Ref 'AWS::NoValue']
+      Environment:
+        Variables:
+          RARC_ENV: prod
+          RARC_CONFIG_URL: !Ref RarcConfigUrl
+          DEFAULT_OWNER: !Ref DefaultOwner
+          SLACK_CHANNEL: !Ref SlackChannel
+          SECRETS_PREFIX: !Sub '${SecretsPrefix}/prod'
+          RELEASEBOT_ACK_ONLY: '1'
+          DD_SERVICE: releasebot
+          DD_ENV: prod
+          DD_SITE: datadoghq.com
+          DD_TRACE_ENABLED: 'true'
+      Tags:
+        - {Key: app,        Value: releasebot}
+        - {Key: migration,  Value: msnbc-dev-to-msnbc-prod}
+
+  CutReleaseVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref CutRelease
+      Description: !Sub 'deployed by ${AWS::StackName}'
+
+  CutReleaseAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref CutRelease
+      FunctionVersion: !GetAtt CutReleaseVersion.Version
+      Name: live
+
+  CutReleaseTest:
+    Type: AWS::Lambda::Function
+    DependsOn: CutReleaseTestLogGroup
+    Properties:
+      FunctionName: cutReleaseTest
+      Runtime: !Ref Runtime
+      Handler: bootstrap
+      Architectures: [x86_64]
+      Role: !Ref CutReleaseRoleArn
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref CutReleaseKey}
+      MemorySize: 512
+      Timeout: 30
+      ReservedConcurrentExecutions: 2
+      Layers: !If [HasDatadog, [!Ref DatadogExtensionArn], !Ref 'AWS::NoValue']
+      Environment:
+        Variables:
+          RARC_ENV: test
+          RARC_CONFIG_URL: !Ref RarcConfigUrl
+          DEFAULT_OWNER: !Ref DefaultOwner
+          SLACK_CHANNEL: !Ref SlackChannel
+          SECRETS_PREFIX: !Sub '${SecretsPrefix}/test'
+          RELEASEBOT_ACK_ONLY: '1'
+          DD_SERVICE: releasebot
+          DD_ENV: test
+          DD_SITE: datadoghq.com
+      Tags:
+        - {Key: app, Value: releasebot}
+
+  CutReleaseTestVersion:
+    Type: AWS::Lambda::Version
+    Properties: {FunctionName: !Ref CutReleaseTest}
+  CutReleaseTestAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref CutReleaseTest
+      FunctionVersion: !GetAtt CutReleaseTestVersion.Version
+      Name: live
+
+  Mergeback:
+    Type: AWS::Lambda::Function
+    DependsOn: MergebackLogGroup
+    Properties:
+      FunctionName: releaseAutomationMergeback
+      Runtime: !Ref Runtime
+      Handler: bootstrap
+      Architectures: [x86_64]
+      Role: !Ref MergebackRoleArn
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref MergebackKey}
+      MemorySize: 512
+      Timeout: 30
+      ReservedConcurrentExecutions: 5
+      Layers: !If [HasDatadog, [!Ref DatadogExtensionArn], !Ref 'AWS::NoValue']
+      Environment:
+        Variables:
+          RARC_ENV: prod
+          RARC_CONFIG_URL: !Ref RarcConfigUrl
+          DEFAULT_OWNER: !Ref DefaultOwner
+          SLACK_CHANNEL: !Ref SlackChannel
+          SECRETS_PREFIX: !Sub '${SecretsPrefix}/prod'
+          RELEASEBOT_ACK_ONLY: '1'
+          DD_SERVICE: releasebot
+          DD_ENV: prod
+      Tags:
+        - {Key: app, Value: releasebot}
+
+  MergebackVersion:
+    Type: AWS::Lambda::Version
+    Properties: {FunctionName: !Ref Mergeback}
+  MergebackAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref Mergeback
+      FunctionVersion: !GetAtt MergebackVersion.Version
+      Name: live
+
+  MergebackTest:
+    Type: AWS::Lambda::Function
+    DependsOn: MergebackTestLogGroup
+    Properties:
+      FunctionName: releaseAutomationMergebackTest
+      Runtime: !Ref Runtime
+      Handler: bootstrap
+      Architectures: [x86_64]
+      Role: !Ref MergebackRoleArn
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref MergebackKey}
+      MemorySize: 512
+      Timeout: 30
+      ReservedConcurrentExecutions: 2
+      Layers: !If [HasDatadog, [!Ref DatadogExtensionArn], !Ref 'AWS::NoValue']
+      Environment:
+        Variables:
+          RARC_ENV: test
+          RARC_CONFIG_URL: !Ref RarcConfigUrl
+          DEFAULT_OWNER: !Ref DefaultOwner
+          SLACK_CHANNEL: !Ref SlackChannel
+          SECRETS_PREFIX: !Sub '${SecretsPrefix}/test'
+          RELEASEBOT_ACK_ONLY: '1'
+          DD_SERVICE: releasebot
+          DD_ENV: test
+      Tags:
+        - {Key: app, Value: releasebot}
+
+  MergebackTestVersion:
+    Type: AWS::Lambda::Version
+    Properties: {FunctionName: !Ref MergebackTest}
+  MergebackTestAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref MergebackTest
+      FunctionVersion: !GetAtt MergebackTestVersion.Version
+      Name: live
+
+  # --- Alarms -------------------------------------------------------------
+  # Errors is the obvious one. The two that actually catch this application
+  # failing are below it: a 401 rate that jumps (someone pointed Slack at the
+  # wrong account, or the signing secret rotation half-landed) and a function
+  # that stops being invoked at all (the cutover moved traffic and nobody
+  # noticed the old one went quiet).
+
+  CutReleaseErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarms
+    Properties:
+      AlarmName: releasebot-cutRelease-errors
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{Name: FunctionName, Value: !Ref CutRelease}]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopicArn]
+
+  CutReleaseThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarms
+    Properties:
+      AlarmName: releasebot-cutRelease-throttles
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions: [{Name: FunctionName, Value: !Ref CutRelease}]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopicArn]
+
+  UnauthorizedRequestsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarms
+    Properties:
+      AlarmName: releasebot-unauthorized-spike
+      Namespace: ReleaseBot
+      MetricName: AuthRejected
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopicArn]
+
+  UnauthorizedMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref CutReleaseLogGroup
+      FilterPattern: '{ $.message = "rejected*" }'
+      MetricTransformations:
+        - MetricNamespace: ReleaseBot
+          MetricName: AuthRejected
+          MetricValue: '1'
+          DefaultValue: 0
+
+Outputs:
+  CutReleaseAliasArn:      {Value: !Ref CutReleaseAlias}
+  CutReleaseTestAliasArn:  {Value: !Ref CutReleaseTestAlias}
+  MergebackAliasArn:       {Value: !Ref MergebackAlias}
+  MergebackTestAliasArn:   {Value: !Ref MergebackTestAlias}
+  CutReleaseName:          {Value: !Ref CutRelease}
+  CutReleaseTestName:      {Value: !Ref CutReleaseTest}
+  MergebackName:           {Value: !Ref Mergeback}
+  MergebackTestName:       {Value: !Ref MergebackTest}

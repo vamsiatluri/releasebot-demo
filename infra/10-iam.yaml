@@ -1,0 +1,186 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ReleaseBot - identity. GitHub Actions OIDC deploy role plus the Lambda
+  execution roles. Deployed FIRST and separately from the application stacks so
+  that rolling the application back never rolls back the trust relationship the
+  pipeline needs to roll it back with.
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Default: msnbc
+  GitHubRepo:
+    Type: String
+    Default: releasebot
+  CreateOIDCProvider:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'false'
+    Description: >
+      An account can hold only ONE provider for token.actions.githubusercontent.com.
+      Set true only in an account that does not already have one; a second
+      CreateOpenIDConnectProvider fails with EntityAlreadyExists and rolls the
+      whole stack back.
+  SecretsPrefix:
+    Type: String
+    Default: releasebot
+    Description: Secrets Manager name prefix this account's functions may read.
+
+Conditions:
+  MakeProvider: !Equals [!Ref CreateOIDCProvider, 'true']
+
+Resources:
+
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: MakeProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+      # Thumbprints are no longer verified by IAM for this provider, but the
+      # field is still required by the API.
+      ThumbprintList: ['6938fd4d98bab03faadb97b34396831e3780aea1']
+
+  # The deploy identity. This replaces the "add production-account repository
+  # secrets" line in the SOW: no AWS access key is ever minted, stored in GitHub,
+  # or rotated, because none exists.
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'releasebot-github-deploy-${AWS::AccountId}'
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              # Pinned to a branch, not StringLike on repo:org/repo:*. The
+              # loose form lets ANY ref in the repo -- including a pull request
+              # from a fork -- assume a role that can rewrite production
+              # Lambdas.
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/main'
+                  - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
+      Policies:
+        - PolicyName: releasebot-deploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ManageReleaseBotFunctionsOnly
+                Effect: Allow
+                Action:
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:PublishVersion
+                  - lambda:UpdateAlias
+                  - lambda:GetAlias
+                  - lambda:ListVersionsByFunction
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:cutRelease*'
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:releaseAutomationMergeback*'
+              - Sid: PublishArtifacts
+                Effect: Allow
+                Action: [s3:PutObject, s3:GetObject]
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::releasebot-artifacts-${AWS::AccountId}/*'
+              - Sid: DeployInfrastructure
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:GetTemplateSummary
+                Resource: !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/releasebot-*/*'
+              - Sid: ApiGatewayRedeploy
+                Effect: Allow
+                Action: [apigateway:POST, apigateway:GET, apigateway:PATCH]
+                Resource: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/restapis/*'
+              # iam:PassRole is the quiet privilege-escalation path: without a
+              # PassedToService condition, the deploy role can attach ANY role
+              # it can name to a Lambda it controls.
+              - Sid: PassExecutionRolesToLambdaOnly
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/releasebot-exec-*'
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: lambda.amazonaws.com
+
+  CutReleaseExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'releasebot-exec-cutrelease'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: secrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Scoped to this function's own secrets by name prefix, not
+              # secretsmanager:GetSecretValue on "*".
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretsPrefix}/*'
+              - Effect: Allow
+                Action: [kms:Decrypt]
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+
+  MergebackExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'releasebot-exec-mergeback'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: secrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretsPrefix}/*'
+              - Effect: Allow
+                Action: [kms:Decrypt]
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+
+Outputs:
+  DeployRoleArn:
+    Value: !GetAtt DeployRole.Arn
+    Export: {Name: !Sub '${AWS::StackName}-DeployRoleArn'}
+  CutReleaseExecutionRoleArn:
+    Value: !GetAtt CutReleaseExecutionRole.Arn
+    Export: {Name: !Sub '${AWS::StackName}-CutReleaseExecRoleArn'}
+  MergebackExecutionRoleArn:
+    Value: !GetAtt MergebackExecutionRole.Arn
+    Export: {Name: !Sub '${AWS::StackName}-MergebackExecRoleArn'}
