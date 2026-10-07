@@ -134,7 +134,7 @@ type junitFailure struct {
 // annotated on the run rather than buried in a log.
 func (s Summary) WriteJUnit(w io.Writer) error {
 	suite := junitSuite{
-		Name: "releasebot-contract-" + s.Environment,
+		Name:  "releasebot-contract-" + s.Environment,
 		Tests: s.Total, Failures: s.Failed, Time: s.Duration.Seconds(),
 	}
 	for _, r := range s.Results {

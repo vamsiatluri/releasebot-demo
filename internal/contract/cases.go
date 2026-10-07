@@ -37,12 +37,12 @@ const (
 type Kind string
 
 const (
-	SlackSigned Kind = "slack-signed"  // correctly signed, should be accepted
-	SlackForged Kind = "slack-forged"  // bad signature, must be rejected
-	SlackStale  Kind = "slack-stale"   // valid signature, old timestamp
-	JiraSecret  Kind = "jira-secret"   // correct shared secret
-	JiraWrong   Kind = "jira-wrong"    // wrong shared secret
-	Plain       Kind = "plain"         // unauthenticated, e.g. health
+	SlackSigned Kind = "slack-signed" // correctly signed, should be accepted
+	SlackForged Kind = "slack-forged" // bad signature, must be rejected
+	SlackStale  Kind = "slack-stale"  // valid signature, old timestamp
+	JiraSecret  Kind = "jira-secret"  // correct shared secret
+	JiraWrong   Kind = "jira-wrong"   // wrong shared secret
+	Plain       Kind = "plain"        // unauthenticated, e.g. health
 )
 
 type Case struct {

@@ -29,8 +29,8 @@ func TestIsSecretish(t *testing.T) {
 
 func TestSplitEnvNeverReturnsASecretValue(t *testing.T) {
 	env := map[string]string{
-		"RARC_ENV":     "prod",
-		"GITHUB_TOKEN": "ghp_thisMustNeverAppearInOutput",
+		"RARC_ENV":       "prod",
+		"GITHUB_TOKEN":   "ghp_thisMustNeverAppearInOutput",
 		"SECRETS_PREFIX": "releasebot/prod",
 	}
 	keys, safe, secretLooking := SplitEnv(env)

@@ -5,9 +5,10 @@
 //	    -env prod-account-test-stage -junit out.xml -summary out.md -metrics out.json
 //
 // Exit codes are what CI reads:
-//   0  everything passed
-//   1  at least one CRITICAL check failed  -- block the deploy, do not cut over
-//   2  only non-critical checks failed     -- visible, but does not block
+//
+//	0  everything passed
+//	1  at least one CRITICAL check failed  -- block the deploy, do not cut over
+//	2  only non-critical checks failed     -- visible, but does not block
 package main
 
 import (

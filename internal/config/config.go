@@ -1,8 +1,9 @@
 // Package config resolves ReleaseBot's runtime configuration.
 //
 // The migration SOW lists these as Lambda environment variables:
-//   GITHUB_TOKEN, SLACK_TOKEN, JIRA creds, RARC_ENV, RARC_CONFIG_URL,
-//   the Slack signing secret, and the Datadog variables.
+//
+//	GITHUB_TOKEN, SLACK_TOKEN, JIRA creds, RARC_ENV, RARC_CONFIG_URL,
+//	the Slack signing secret, and the Datadog variables.
 //
 // Non-secret values stay as env vars. Secrets are resolved through a
 // SecretResolver so the production account can hold them in Secrets Manager
@@ -27,11 +28,11 @@ type Config struct {
 	JiraAPI       string
 	DefaultBranch string
 
-	GitHubToken       string
-	SlackToken        string
+	GitHubToken        string
+	SlackToken         string
 	SlackSigningSecret string
-	JiraUser          string
-	JiraToken         string
+	JiraUser           string
+	JiraToken          string
 
 	DatadogSite    string
 	DatadogAPIKey  string

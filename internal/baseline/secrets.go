@@ -22,14 +22,14 @@ var secretish = []string{
 // than a clever rule -- "KEY" matching "MONKEY" is the kind of thing a regex
 // gets wrong silently.
 var nonSecretExact = map[string]bool{
-	"AWS_REGION":                true,
-	"AWS_DEFAULT_REGION":        true,
-	"AWS_LAMBDA_FUNCTION_NAME":  true,
-	"SECRETS_PREFIX":            true, // a prefix is a pointer, not a value
-	"SECRET_ARN":                true, // likewise: an ARN names a secret
-	"KEY_PREFIX":                true,
-	"AUTH_MODE":                 true,
-	"SIGNING_ALGORITHM":         true,
+	"AWS_REGION":               true,
+	"AWS_DEFAULT_REGION":       true,
+	"AWS_LAMBDA_FUNCTION_NAME": true,
+	"SECRETS_PREFIX":           true, // a prefix is a pointer, not a value
+	"SECRET_ARN":               true, // likewise: an ARN names a secret
+	"KEY_PREFIX":               true,
+	"AUTH_MODE":                true,
+	"SIGNING_ALGORITHM":        true,
 }
 
 // IsSecretish reports whether a variable's VALUE should be withheld.

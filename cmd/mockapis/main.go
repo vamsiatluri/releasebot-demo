@@ -38,8 +38,8 @@ type pr struct {
 func main() {
 	s := &state{
 		branches: map[string]string{
-			"msnbc/news-app@main":        "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
-			"msnbc/payments-core@main":   "99887766554433221100aabbccddeeff00112233",
+			"msnbc/news-app@main":      "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+			"msnbc/payments-core@main": "99887766554433221100aabbccddeeff00112233",
 			// The shadow repo the contract suite drives. A real migration wants
 			// the same thing in the real GitHub org: an empty repository with
 			// production's branch protection that a test bot may cut branches in.

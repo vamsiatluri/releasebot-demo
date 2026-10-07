@@ -9,7 +9,7 @@ func TestInvocationAlias(t *testing.T) {
 		"arn:aws:lambda:us-east-1:123456789012:function:cutRelease:41":      "41",
 		"arn:aws:lambda:us-east-1:123456789012:function:cutRelease:$LATEST": "",
 		"arn:aws:lambda:us-east-1:123456789012:function:cutRelease":         "",
-		"":                                                                  "",
+		"": "",
 	}
 	for arn, want := range cases {
 		if got := (Invocation{InvokedFunctionARN: arn}).Alias(); got != want {

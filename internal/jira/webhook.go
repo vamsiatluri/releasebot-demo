@@ -38,7 +38,7 @@ type Event struct {
 	Issue        struct {
 		Key    string `json:"key"`
 		Fields struct {
-			Summary    string `json:"summary"`
+			Summary     string `json:"summary"`
 			FixVersions []struct {
 				Name string `json:"name"`
 			} `json:"fixVersions"`

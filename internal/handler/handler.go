@@ -35,12 +35,12 @@ const (
 )
 
 type Handler struct {
-	Action  Action
-	Cfg     config.Config
-	Svc     *release.Service
-	Slack   *slackclient.Client
-	Log     *obs.Logger
-	Now     func() time.Time
+	Action Action
+	Cfg    config.Config
+	Svc    *release.Service
+	Slack  *slackclient.Client
+	Log    *obs.Logger
+	Now    func() time.Time
 	// AckOnly returns the Slack 3-second ACK and finishes the work
 	// asynchronously. False keeps the original synchronous behaviour.
 	AckOnly bool

@@ -60,6 +60,7 @@ func (i Invocation) Deadline() time.Time {
 //
 //	arn:aws:lambda:us-east-1:123456789012:function:cutRelease:prod
 //	                                                          ^^^^
+//
 // See docs/DESIGN-PROPOSALS.md #1.
 func (i Invocation) Alias() string {
 	// ARN has 7 colon-separated fields; an 8th field is the qualifier.

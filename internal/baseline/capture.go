@@ -149,7 +149,7 @@ func (c *Capturer) captureFunctions(b *Baseline, owners map[string]string) error
 			RoleArn: f.Role, CodeSha256: f.CodeSha256, CodeSize: f.CodeSize,
 			LastModified: f.LastModified,
 			EnvKeys:      keys, EnvNonSecret: safe, SecretLooking: secretLooking,
-			DLQ: f.DeadLetterConfig.TargetArn,
+			DLQ:  f.DeadLetterConfig.TargetArn,
 			Tags: map[string]string{},
 		}
 		for _, l := range f.Layers {
@@ -301,8 +301,8 @@ func (c *Capturer) captureAPIs(b *Baseline, owners map[string]string) error {
 
 		var res struct {
 			Items []struct {
-				Id, Path         string
-				ResourceMethods  map[string]any
+				Id, Path        string
+				ResourceMethods map[string]any
 			}
 		}
 		if err := c.aws(&res, "apigateway", "get-resources", "--rest-api-id", a.Id); err == nil {
@@ -332,10 +332,10 @@ func (c *Capturer) captureAPIs(b *Baseline, owners map[string]string) error {
 				TracingEnabled          bool
 				AccessLogSettings       struct{ DestinationArn string }
 				MethodSettings          map[string]struct {
-					LoggingLevel          string
-					DataTraceEnabled      bool
-					ThrottlingRateLimit   float64
-					ThrottlingBurstLimit  int
+					LoggingLevel         string
+					DataTraceEnabled     bool
+					ThrottlingRateLimit  float64
+					ThrottlingBurstLimit int
 				}
 			}
 		}
@@ -360,9 +360,9 @@ func (c *Capturer) captureAPIs(b *Baseline, owners map[string]string) error {
 func (c *Capturer) captureLogGroups(b *Baseline) error {
 	var groups struct {
 		LogGroups []struct {
-			LogGroupName   string
+			LogGroupName    string
 			RetentionInDays int
-			StoredBytes    int64
+			StoredBytes     int64
 		}
 	}
 	if err := c.aws(&groups, "logs", "describe-log-groups"); err != nil {
