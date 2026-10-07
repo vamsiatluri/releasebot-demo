@@ -1,115 +1,207 @@
 # One page — have this open during the call
 
-## Know who you're talking to
+## The reframe: this is not a development job, and their own document says so
 
-**Vendor / recruiter screen** → availability, rate structure, "yes, I've done AWS
-account migrations, Lambda, API Gateway, GitHub Actions." 60-second pitch. **No
-deep technical content** — they can't score it and it burns the call.
+Read their SOW again:
 
-**Hiring manager / CloudOps** → everything below.
+> *"Preserve existing function names and application behavior unless a change is
+> required and approved."*
 
----
+**The code is explicitly frozen.** Nobody is asking you to write Go. Look at
+what the deliverables actually are: infrastructure build, CI/CD migration,
+testing and production readiness, cutover and decommission, documentation and
+handoff. And one of the six rows in their own skills table is **Delivery
+leadership** — technical planning, dependency management, change coordination,
+test evidence, stakeholder communication, operational handoff.
 
-## The frame: they are buying delivery of a written SOW in 12 weeks
+Even the runtime row says **"troubleshooting," "packaging," "environment
+configuration"** — operator words, not developer words. They did not write
+"develop in Go."
 
-Not a career, not a culture fit. Every answer should sound like someone who has
-landed fixed-scope work before. **Agree with their plan.** Say *"I'd run it in
-your phase order"* out loud at least once.
+**So lead with this, in your own words, early:**
 
----
-
-## Land these seven
-
-**Opening (first 10 minutes)**
-
-1. **"I'd run it in your phase order. The phases I'd spend planning time on are
-   4 and 6."** Parallel run and cutover.
-2. **The freeze calendar.** Midterms 3 Nov, then year-end. Across 12 weeks that
-   could remove 4–5 of your usable change windows. Front-load phases 1–4 into
-   the election freeze — none of it touches the production system of operation.
-   Target cutover for the back half of November.
-3. **The Phase 7 collision.** Their decommission gate is "production
-   acceptance" = a soak of ~2 release cycles. If they release monthly that falls
-   outside 12 weeks. Agree in week 1 which it is: compress validation, hand off a
-   documented runbook with a named executor, or extend.
-
-**Technical (when asked)**
-
-4. **The cutover is URLs, not infrastructure.** The invoke URL carries the
-   account-specific `apiId`, so it necessarily changes. Slack slash command URL,
-   Slack **interactivity** URL (separate — easy to miss), Jira webhook, and every
-   runbook holding the old one.
-5. **Parallel run is a split-brain risk, not a safety net.** Two bots, both with
-   branch-write GitHub tokens. Exactly one is the system of operation at any
-   moment. Back it with: build once / deploy many, verify the deployed
-   `CodeSha256` against the digest you built in each account, and make every
-   GitHub write idempotent.
-6. **Aliases.** Put a `live` alias on all four during the migration — additive,
-   breaks nothing, rollback becomes one `update-alias`. *Propose* collapsing the
-   prod/test pairs after acceptance. **The trap: Lambda env vars are pinned to a
-   published VERSION, not an alias** — two aliases on one version see identical
-   env vars, so `RARC_ENV=prod` vs `test` can't be expressed that way. Read the
-   alias off the invoked function ARN instead. Log groups are per function too.
-7. **Decommission is verification, not deletion.** A `DeletionTime` is not a
-   deleted stack. Implicit log groups are never-expire and not stack-owned.
-   And the GitHub token isn't an AWS resource, so no stack deletion touches it.
+> "The way I read your plan, this is a migration, not a development project —
+> you've said preserve the function names and the behaviour. So the code isn't
+> the risk. The risk is everything the code is attached to: the Slack URL, the
+> Jira webhook, the token, and whatever else is pointing at that API that nobody
+> has written down. Coming into a system I didn't build, working out what it
+> really is and what it's connected to, and moving it without breaking anything
+> around it — that's what I've done for thirty years."
 
 ---
 
-## Pre-empt these three — volunteer, don't get caught
+## Sell the thing you're actually good at
 
-| Gap | Say |
-|---|---|
-| **Go** | "I'm not a Go developer — my hands-on is Python and TypeScript. I've owned the build, packaging and release path for languages I don't author for twenty years. Here the Go surface is the runtime contract and packaging, not feature development. If it turns into Go feature work I'd want to be straight with you about ramp." |
-| **Slack apps** | "I've built Slack into deployment approvals twice — ECS blue/green at Cascade, approval gates at FNF. A Slack *app* with slash commands and a signing secret was new, so I built one." |
-| **Datadog extension** | "I selected and stood up Datadog at William Hill, Sumo Logic as SIEM at Cascade. Haven't run the Lambda extension. I'd keep structured JSON going to CloudWatch regardless, extension on top." |
+You are not the person who writes the application. You are the person who comes
+in, works out how it really hangs together, and makes it move without breaking.
+That is a different job and it is the harder one on a migration.
+
+Four lines, all true, all in plain language:
+
+1. **"I'm not a developer and I've never claimed to be. I own everything around
+   the code — how it's built, packaged, deployed, configured, monitored, and
+   what happens when it breaks at two in the morning."**
+
+2. **"What I'm good at is walking into something undocumented and figuring out
+   what it actually does, as opposed to what people think it does."**
+
+3. **"The first thing I'd do is not touch anything. I'd read the live account —
+   not the templates, the running account — because six years of console edits
+   won't be in the templates. The gap between those two is the project."**
+
+4. **"I care that the proof is real. You can't verify a system using the thing
+   you're verifying. If I tell you the new account behaves like the old one, I
+   want that to be evidence, not an assertion."**
+
+Number 4 is yours — it is the idea you've been writing about publicly, and on
+this project it *is* the job: their whole Phase 5 is producing evidence that the
+new account behaves like the old one. **Lead with it if you only get to say one
+thing.**
 
 ---
 
-## Two stories — 90 seconds each, not five minutes
+## When you don't know — the three-part move
 
-**"A deploy went wrong."** Release 5.2.3 shipped to both app stores with zero
-tests having run, on a green pipeline. A harness check sat above the unit tests
-in a sequential job, returned a false positive, and aborted the run before them —
-clean exit status, green pipeline. Fix wasn't the false positive; it was gate
-*ordering*, plus moving full regression from a push trigger to a promotion gate.
-**"'The pipeline was green' is a statement about the pipeline, not the software."**
+This is the most important skill in this interview, and from thirty years in it
+reads as confidence, not a gap. Practise the shape, not the content:
 
-**"Something you broke."** Took `www` down — deleted a stack in a dev account
-that owned production DNS records, created there years earlier, nobody had
-written down what it owned. Lesson: enumerate what a resource *owns*, not what
-it's named. **Land it on their Phase 7**: "which is exactly why I'd want
-decommission to be a verified checklist behind an acceptance gate."
+1. **Say you don't know. One sentence, no apology, no waffle.**
+2. **Say the adjacent thing you do know.**
+3. **Say how you'd find out.**
+
+> *"I don't know that offhand. What I do know is that the packaging on those
+> custom runtimes has to be exactly right or it fails at startup with an error
+> that tells you almost nothing — so the first thing I'd do is get a trivial
+> version deployed end to end before touching anything real, and work from the
+> error."*
+
+**Never recite a line you can't go one level deeper on.** One follow-up question
+is all it takes, and the cost isn't that answer — it's that everything you said
+before it stops being believed. If you're not sure you can defend it, don't say it.
+
+---
+
+## Five things to land — in your words, not jargon
+
+1. **"I'd run it in your phase order."** Say it out loud. They wrote a seven-phase
+   plan; agreeing with it is worth more than improving it.
+
+2. **"The cutover is URLs, not infrastructure."** The address of the API has the
+   account baked into it, so it changes when you move accounts. Everything
+   pointing at it has to move the same day — the Slack command, the Slack button
+   handler (separate thing, easy to miss), the Jira webhook, and every runbook
+   nobody has inventoried.
+
+3. **"Running both at once isn't a safety net, it's a risk."** Two copies of the
+   bot, both holding credentials that can write to the same repos. Only one can
+   be the live one at any moment, and that has to be written down, not remembered.
+
+4. **"I'd put an alias on each function so a rollback is one command."** You don't
+   need more than that sentence. If they go deeper and you're comfortable: the
+   bigger idea is collapsing the prod/test pairs onto one function with two
+   aliases, *but* the config is attached to the version rather than the alias, so
+   it isn't a free change — and their SOW says don't change behaviour without
+   approval, which you agree with. **If you're not sure you can hold that
+   conversation, stop after the first sentence.** It is still a good answer.
+
+5. **"Deleting isn't the same as decommissioned."** A console that says deleted
+   isn't proof. Log groups outlive their stack and keep billing. And the GitHub
+   token isn't an AWS resource at all, so nothing you delete in AWS touches it.
+
+Plus the two contract points: **the freeze calendar** (midterms 3 Nov, then
+year-end — that could take out four or five of your twelve weeks of change
+windows) and **the Phase 7 soak may not fit the contract**.
+
+---
+
+## If they ask about coding
+
+Do not volunteer this. If asked, be straight and unbothered:
+
+> "I'm not an application developer — I never have been. I read code and debug
+> it, I've owned the build and release path for Java, .NET, Node and now Go, and
+> for scripting and automation I use Python. These days when I need code written
+> I generate it and then verify it, which is how most of this work is going. What
+> I bring is knowing what the system is supposed to do and whether what's in
+> front of me actually does it."
+
+On Go specifically — **this one you should pre-empt**, because it's in their
+required skills:
+
+> "I should say up front, I'm not a Go developer. Your plan says preserve the
+> behaviour, so I'm reading the Go surface here as packaging, configuration and
+> troubleshooting rather than feature work — and that part I'm comfortable with.
+> If it does turn into writing Go, I'd rather tell you now."
+
+**Then ask them the question that settles it:** *"How much of this do you expect
+to be actual code changes versus infrastructure and coordination?"* If the answer
+is "a lot of code," you've found out in minute five instead of week two.
+
+---
+
+## The repo — think before you mention it
+
+You have a working model of their system. **You did not write that Go by hand
+and you cannot walk through it line by line.** If you offer it and they ask you
+to, you're in exactly the position you're trying to avoid.
+
+Safest: **don't bring it up.** It did its job — it's why you know the packaging
+trap, the URL problem and the alias catch. That knowledge is yours regardless of
+who typed the code.
+
+If they ask what you've done to prepare, and only if you feel steady:
+
+> "I put together a working model of what your scope of work describes, so I
+> could pressure-test the migration plan against something real instead of just
+> having opinions. I'll be upfront — I generated the code; what I was after was
+> the failure modes and the sequencing."
+
+Never screen-share it unprompted.
+
+---
+
+## Two stories — 90 seconds, plain language
+
+**"A deploy went wrong."** A release shipped to both app stores with zero tests
+having run, on a green pipeline. A check sat above the unit tests, failed
+wrongly, and killed the run before the tests — and because it exited clean, the
+pipeline was green. The fix wasn't that one bug, it was the ordering: a check
+about the test harness could silently hide a problem in the product. **"Green
+pipeline is a statement about the pipeline, not about the software."**
+
+**"Something you broke."** Took `www` down. Deleted a stack in a development
+account that turned out to own production DNS — created there years earlier,
+nobody had written down what it owned. The lesson was to enumerate what a thing
+*owns* before deleting it, not what it's named. **Land it on their Phase 7.**
+
+Both stories are about judgement and verification. Neither needs you to be a
+programmer. That's why they're the right two.
 
 ---
 
 ## Ask them
 
-1. How does the change-freeze calendar run around election coverage and year-end?
-2. What's your release cadence, and what does "production acceptance" mean
-   concretely — one cycle, two, a soak period?
-3. Who owns the Slack app and the Jira webhook config — can I make those changes,
-   or does another team?
-4. Is there a repo you're comfortable having a test bot cut real branches in?
-5. Is there a path to extension, and what would it depend on?
+1. **"How much of this is code changes versus infrastructure and coordination?"**
+2. "How does the change freeze run around election coverage and year-end?"
+3. "What's your release cadence, and what does production acceptance actually
+   mean — one cycle, two, a soak?"
+4. "Who owns the Slack app and the Jira webhook config — can I change those, or
+   is that another team?"
+5. "Is there a repo you're comfortable having a test bot cut real branches in?"
 
 ---
 
 ## Do not
 
-- **Don't claim Go.** One follow-up ends it.
-- **Don't assert what ReleaseBot does.** Say *"the scope of work pins it down to —"*
-  You're inferring from their document. Stating inference as inference is a strength;
-  being wrong about their system is not.
-- **Don't lead with the repo.** Let it come out when a technical question lands:
-  *"I built a model to make sure I understood the bootstrap contract before
-  talking about it."* Offer; don't screen-share unprompted.
-- **Don't pitch the P1 proposals as "what I'd do next."** You won't be there.
-  They're handoff recommendations.
-- **Don't say "we should use Terraform."** They said match existing repository and
-  account standards. Ask what's there.
-- **Don't pitch CoachArc as a business.** No revenue, users, growth. "A product I
-  built to stay hands-on with a modern stack."
-- **Don't mention Claude or ChatGPT in the FNF context.** Copilot was sanctioned there.
-- **Don't lead with Jenkins.**
-- **Don't give a rate before you know W2-via-vendor vs C2C vs 1099.**
+- **Don't recite anything you can't defend one level down.** Fewer, safer lines
+  beats more, riskier ones. Every time.
+- Don't volunteer that you use AI to write code — but don't dodge it if asked.
+- Don't claim Go. Pre-empt it instead.
+- Don't say "my hands-on development is Python and TypeScript." Retired.
+- Don't lead with the repo, and don't screen-share it.
+- Don't pitch the follow-up proposals as "what I'd do next." You won't be there.
+- Don't say "we should use Terraform." Ask what they already have.
+- Don't pitch CoachArc as a business. "A product I built to stay hands-on."
+- Don't mention Claude or ChatGPT in the FNF context. Copilot was sanctioned there.
+- Don't lead with Jenkins.
+- Don't give a rate before you know W2-via-vendor vs C2C vs 1099.
