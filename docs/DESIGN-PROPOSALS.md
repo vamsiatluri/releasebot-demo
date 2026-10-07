@@ -68,6 +68,101 @@ a `test` alias on published versions. API Gateway's prod stage points at the
   without approval, and it is the right call: if something misbehaves after the
   move, you want the only variable to have been the account.
 
+---
+
+### ★ How configuration and secrets actually work on one artifact
+
+This is the question the whole proposal turns on, and it has two halves with two
+different answers. Both were proven in a real account on 2026-10-07 rather than
+reasoned about.
+
+#### Half one: configuration — solvable, cleanly
+
+Same function, same published version 5, two aliases on it:
+
+```
+alias prod  RARC_ENV = test     <- identical, necessarily
+alias test  RARC_ENV = test        env vars are pinned to the VERSION
+
+invoked through :prod  ->  {"ok":true,"env":"prod",...}
+invoked through :test  ->  {"ok":true,"env":"test",...}
+```
+
+The environment variable is the same through both doors — it cannot be otherwise.
+But the function still answers correctly, because it does not trust the env var
+to tell it where it is. It reads the alias out of
+`Lambda-Runtime-Invoked-Function-Arn`, which is qualified
+(`...:function:cutRelease:prod`), and uses that.
+
+So configuration layers like this:
+
+| What | Where it lives | Why there |
+|---|---|---|
+| **Which environment am I** | the invoked ARN's alias | the only in-band signal that can differ between two aliases on one version |
+| **Settings that are the same everywhere** | environment variable on the version | frozen with the code, so what shipped is what was tested |
+| **Settings that differ per environment** | Parameter Store, `/releasebot/<env>/…` | outside the version, so changing one needs no redeploy |
+| **Secrets** | Secrets Manager, `releasebot/<env>/…` | never in the version — see below |
+| **Permissions** | the function's execution role | ⛔ **cannot differ by alias.** See half two. |
+
+Keeping secrets out of the version is not only a security preference. It is what
+makes rollback survive a rotation: a version freezes its environment, so a
+version published before a rotation carries the *old* secret and is no longer a
+usable rollback target. Hold a *reference* and the version freezes the reference,
+not the value.
+
+One implementation detail worth getting right: resolve the configuration during
+INIT and cache it, but **key that cache by the resolved alias, not globally.** I
+would not want to depend on an execution environment being dedicated to a single
+qualifier; keying the cache costs nothing and removes the question entirely.
+
+#### Half two: permissions — NOT solvable, and this is the real argument against
+
+```
+get-function-configuration cutReleaseTest:prod  ->  role releasebot-exec-cutrelease
+get-function-configuration cutReleaseTest:test  ->  role releasebot-exec-cutrelease
+```
+
+**A function has exactly one execution role, whichever alias you came through.**
+An alias is a pointer to a version; it is not a security principal, and no IAM
+condition can see which alias was invoked.
+
+So collapsing `cutRelease` and `cutReleaseTest` into one function means the single
+role must be able to read **both** `releasebot/prod/*` and `releasebot/test/*`.
+The test path can now reach the production GitHub token. Four functions with four
+roles gave you that boundary in IAM, for free, and the collapse spends it.
+
+Three ways to respond, honestly ranked:
+
+1. **Keep the boundary — don't collapse those pairs.** If prod and test hold
+   genuinely different blast radii, the four-function layout is buying something
+   real and the SOW's shape is correct.
+2. **Assume a role at runtime.** The base role gets `sts:AssumeRole` into
+   `releasebot-prod-reader` or `releasebot-test-reader` depending on the resolved
+   alias. CloudTrail then records which was assumed, so it is auditable — but the
+   base role can assume both, so the boundary now lives in code rather than in
+   IAM. Weaker, and worth saying so.
+3. **Accept it**, but only where the boundary was already theatre — if both
+   environments' tokens point at the same GitHub organisation with the same
+   scopes, separating them protected nothing.
+
+#### What this does to the recommendation
+
+Having worked it through, **the four-function layout is less silly than it looks.**
+It buys a permission boundary that aliases cannot reproduce. The collapse is still
+worth proposing for the operational wins — promote by repointing, canary by
+weight, half the surface to configure — but it is a genuine trade, not a free
+cleanup, and whoever owns the security posture should make the call rather than
+whoever owns the pipeline.
+
+**In the interview:** *"I went in thinking the four functions were redundant. The
+configuration side works fine — you read the alias off the invoked ARN and keep
+the values outside the version. But a function has one execution role whatever
+alias you came through, so collapsing them means one role that can read both
+environments' secrets. That boundary is the thing their current layout is buying,
+and I'd want the security owner to decide whether to spend it, not me."*
+
+---
+
 **Recommendation.** Migrate four functions, like for like. But put the `live`
 alias on each one *during* the migration — aliases are additive, they break
 nothing, and they give the rollback story immediately. Then propose the collapse
