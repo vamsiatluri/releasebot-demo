@@ -5,28 +5,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-export GITHUB_API_URL=http://localhost:9099
-export SLACK_API_URL=http://localhost:9099
-export GITHUB_TOKEN=local-dev-github-token
-export SLACK_TOKEN=local-dev-slack-token
-export SLACK_SIGNING_SECRET=local-dev-signing-secret
-export JIRA_WEBHOOK_SECRET=local-dev-jira-secret
-export DEFAULT_OWNER=msnbc
-export SLACK_CHANNEL=C0RELEASE
-export RARC_ENV=test
-
-cleanup() { kill ${MOCK_PID:-0} ${APP_PID:-0} 2>/dev/null; }
-trap cleanup EXIT
-
-go run ./cmd/mockapis >/tmp/releasebot-mocks.log 2>&1 &
-MOCK_PID=$!
-go run ./cmd/localdev >/tmp/releasebot-app.log 2>&1 &
-APP_PID=$!
-
-for _ in $(seq 1 50); do
-  curl -sf http://localhost:8080/beta/health >/dev/null 2>&1 && break
-  sleep 0.2
-done
+source scripts/harness.sh
+harness_up
 
 step() { printf '\n\033[1m── %s\033[0m\n' "$1"; }
 

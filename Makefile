@@ -72,3 +72,9 @@ demo:
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+# Contract suite against the local harness, including the mutating cases.
+contract-local:
+	@bash -c 'source scripts/harness.sh && harness_up && \
+	  go run ./cmd/contracttest -base http://localhost:8080 -env local \
+	    -repo msnbc/news-app-shadow -mutating'

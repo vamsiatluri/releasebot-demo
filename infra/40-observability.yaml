@@ -1,0 +1,254 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ReleaseBot - monitoring. A Synthetics heartbeat canary, the alarms that page,
+  and the dashboard that answers "is it up" without anyone opening a log.
+
+  ⚠️ A canary is a MONITOR, not a test suite. It answers "is the service alive
+  right now", continuously, from outside. The contract suite answers "does the
+  service behave correctly", on demand, as a gate. Putting the whole contract
+  suite in a canary means maintaining tests in two places AND paying per run
+  forever; putting the heartbeat in GitHub Actions means you only find out it is
+  down when someone pushes. Use both, for the thing each is good at.
+
+Parameters:
+  ApiBaseUrl:       {Type: String, Description: 'e.g. https://xxxx.execute-api.us-east-1.amazonaws.com/prod'}
+  AlarmEmail:       {Type: String, Default: ''}
+  CanaryBucket:     {Type: String}
+  EnableCanary:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'false'
+    Description: >
+      Synthetics bills per run. At one run per 5 minutes that is ~8,640 runs a
+      month. Default off so nobody switches on a recurring cost by accident;
+      the dashboard and alarms work without it.
+  CanaryRate:
+    Type: String
+    Default: 'rate(5 minutes)'
+
+Conditions:
+  WithCanary: !Equals [!Ref EnableCanary, 'true']
+  WithEmail:  !Not [!Equals [!Ref AlarmEmail, '']]
+
+Resources:
+
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties: {TopicName: releasebot-alarms}
+
+  AlarmSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: WithEmail
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  # --- the contract suite's own metrics, pushed by CI -----------------------
+  # These are what make a FUNCTIONAL failure visible to someone who does not
+  # read CI. A canary going green while the bot has stopped verifying Slack
+  # signatures is exactly the gap this closes.
+  ContractCriticalAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: releasebot-contract-critical-failure
+      AlarmDescription: A critical behaviour check failed. Do not cut over; consider rolling back.
+      Namespace: ReleaseBot
+      MetricName: ContractCriticalFailed
+      Statistic: Maximum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      # notBreaching, NOT missing: a suite that stops reporting is a separate
+      # problem, caught by the staleness alarm below rather than by this one
+      # flapping.
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  ContractStaleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: releasebot-contract-not-reporting
+      AlarmDescription: >
+        No contract run has reported in 3 hours. The scheduled verification has
+        stopped -- which looks exactly like "everything is fine" on every other
+        dashboard, and is the failure mode nobody notices.
+      Namespace: ReleaseBot
+      MetricName: ContractSuccessPercent
+      Statistic: SampleCount
+      Period: 10800
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  # --- the heartbeat --------------------------------------------------------
+  CanaryRole:
+    Type: AWS::IAM::Role
+    Condition: WithCanary
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: canary
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:PutObject, s3:GetBucketLocation]
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${CanaryBucket}/*'
+              - Effect: Allow
+                Action: [s3:ListAllMyBuckets, cloudwatch:PutMetricData]
+                Resource: '*'
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:CreateLogGroup, logs:PutLogEvents]
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/cwsyn-*'
+
+  HeartbeatCanary:
+    Type: AWS::Synthetics::Canary
+    Condition: WithCanary
+    Properties:
+      Name: releasebot-heartbeat
+      RuntimeVersion: syn-nodejs-puppeteer-9.1
+      ExecutionRoleArn: !GetAtt CanaryRole.Arn
+      ArtifactS3Location: !Sub 's3://${CanaryBucket}/canary'
+      StartCanaryAfterCreation: true
+      Schedule: {Expression: !Ref CanaryRate, DurationInSeconds: '0'}
+      RunConfig: {TimeoutInSeconds: 30, MemoryInMB: 960}
+      SuccessRetentionPeriod: 7
+      FailureRetentionPeriod: 31
+      Code:
+        Handler: index.handler
+        # Deliberately ONLY the health endpoint. A canary that cut a release
+        # branch every five minutes would be an outage generator, and one that
+        # posted a signed Slack command would need the signing secret sitting in
+        # a canary script in S3.
+        Script: !Sub |
+          const https = require('https');
+          const log = require('SyntheticsLogger');
+          const synthetics = require('Synthetics');
+
+          const check = async function () {
+            const url = '${ApiBaseUrl}/beta/health';
+            const body = await new Promise((resolve, reject) => {
+              const req = https.get(url, { timeout: 10000 }, (res) => {
+                let data = '';
+                res.on('data', (c) => (data += c));
+                res.on('end', () => {
+                  if (res.statusCode !== 200) {
+                    reject(new Error('health returned HTTP ' + res.statusCode));
+                  } else {
+                    resolve(data);
+                  }
+                });
+              });
+              req.on('timeout', () => { req.destroy(new Error('health timed out')); });
+              req.on('error', reject);
+            });
+
+            // Assert the SHAPE, not just the status. A 200 carrying an error
+            // page is the failure a status-only canary reports as healthy.
+            const parsed = JSON.parse(body);
+            if (parsed.ok !== true) {
+              throw new Error('health did not report ok:true -> ' + body);
+            }
+            log.info('health ok: ' + body);
+          };
+
+          exports.handler = async () => {
+            return await synthetics.executeStep('releasebot-health', check);
+          };
+
+  CanaryFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: WithCanary
+    Properties:
+      AlarmName: releasebot-heartbeat-failing
+      Namespace: CloudWatchSynthetics
+      MetricName: SuccessPercent
+      Dimensions: [{Name: CanaryName, Value: !Ref HeartbeatCanary}]
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 100
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  # --- the one screen management looks at ----------------------------------
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: ReleaseBot
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            { "type": "text", "x": 0, "y": 0, "width": 24, "height": 2,
+              "properties": { "markdown": "# ReleaseBot\n**Behaviour** is proven by the contract suite (run on every deploy and on a schedule). **Availability** is proven by the heartbeat canary. Green on both means the service is up *and* still doing the right thing." } },
+
+            { "type": "metric", "x": 0, "y": 2, "width": 8, "height": 6,
+              "properties": {
+                "title": "Behaviour checks passing (%)",
+                "region": "${AWS::Region}", "view": "gauge",
+                "yAxis": { "left": { "min": 0, "max": 100 } },
+                "metrics": [
+                  [ "ReleaseBot", "ContractSuccessPercent", "Environment", "prod" ],
+                  [ ".", ".", ".", "test" ]
+                ],
+                "stat": "Minimum", "period": 3600,
+                "annotations": { "horizontal": [ { "label": "must be 100", "value": 100 } ] }
+              } },
+
+            { "type": "metric", "x": 8, "y": 2, "width": 8, "height": 6,
+              "properties": {
+                "title": "Critical behaviour failures",
+                "region": "${AWS::Region}", "view": "timeSeries",
+                "metrics": [ [ "ReleaseBot", "ContractCriticalFailed", "Environment", "prod" ],
+                             [ ".", ".", ".", "test" ] ],
+                "stat": "Maximum", "period": 3600
+              } },
+
+            { "type": "metric", "x": 16, "y": 2, "width": 8, "height": 6,
+              "properties": {
+                "title": "Unauthorised requests rejected",
+                "region": "${AWS::Region}", "view": "timeSeries",
+                "metrics": [ [ "ReleaseBot", "AuthRejected" ] ],
+                "stat": "Sum", "period": 300
+              } },
+
+            { "type": "metric", "x": 0, "y": 8, "width": 12, "height": 6,
+              "properties": {
+                "title": "Lambda errors and throttles",
+                "region": "${AWS::Region}", "view": "timeSeries",
+                "metrics": [
+                  [ "AWS/Lambda", "Errors", "FunctionName", "cutRelease", { "label": "cutRelease errors" } ],
+                  [ ".", ".", ".", "releaseAutomationMergeback", { "label": "mergeback errors" } ],
+                  [ ".", "Throttles", ".", "cutRelease", { "label": "cutRelease throttles" } ]
+                ],
+                "stat": "Sum", "period": 300
+              } },
+
+            { "type": "metric", "x": 12, "y": 8, "width": 12, "height": 6,
+              "properties": {
+                "title": "API Gateway: requests and 4xx/5xx",
+                "region": "${AWS::Region}", "view": "timeSeries",
+                "metrics": [
+                  [ "AWS/ApiGateway", "Count", "ApiName", "releasebot", { "label": "requests" } ],
+                  [ ".", "4XXError", ".", ".", { "label": "4xx (expected: rejected auth)" } ],
+                  [ ".", "5XXError", ".", ".", { "label": "5xx (never expected)" } ]
+                ],
+                "stat": "Sum", "period": 300
+              } }
+          ]
+        }
+
+Outputs:
+  AlarmTopicArn: {Value: !Ref AlarmTopic}
+  DashboardUrl:
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=ReleaseBot'

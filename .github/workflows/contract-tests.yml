@@ -1,0 +1,174 @@
+name: contract-tests
+
+# ONE suite, THREE triggers. The same binary, the same cases, the same
+# assertions -- only -base changes.
+#
+#   pull_request  -> against the local harness. Free, no AWS, no credentials,
+#                    safe from a fork.
+#   after deploy  -> against each account's test stage. This is the gate.
+#   schedule      -> against the deployed stages. This is the canary half that
+#                    GitHub can do for free; the Synthetics canary covers the
+#                    1-minute-resolution heartbeat that a 30-minute cron cannot.
+#
+# During the migration's parallel run, the scheduled job targets BOTH accounts
+# and compares. "The production account behaves like the dev account" stops
+# being an opinion at that point.
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      target:
+        type: choice
+        options: [local, dev-test-stage, prod-test-stage, both-accounts]
+        default: local
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_run:
+    workflows: [deploy]
+    types: [completed]
+
+permissions:
+  contents: read
+  id-token: write
+  checks: write        # for the JUnit test report
+
+jobs:
+
+  # Fast, free, runs on every PR including from forks. No AWS involved.
+  local:
+    if: github.event_name == 'pull_request' || github.event.inputs.target == 'local'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.22', cache: true}
+      - name: Unit tests
+        run: go test ./... -count=1
+      - name: Contract suite against the local harness
+        run: |
+          set -euo pipefail
+          source scripts/harness.sh && harness_up
+          go run ./cmd/contracttest -base http://localhost:8080 -env local \
+            -repo msnbc/news-app-shadow -mutating \
+            -junit contract-local.xml -summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: contract-local, path: contract-*.xml}
+
+  deployed:
+    if: github.event_name != 'pull_request' && github.event.inputs.target != 'local'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        account: [dev, prod]
+    environment: ${{ matrix.account == 'prod' && 'production' || 'development' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.22', cache: true}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ matrix.account == 'prod' && secrets.PROD_DEPLOY_ROLE_ARN || secrets.DEV_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+          role-session-name: releasebot-contract-${{ github.run_id }}
+
+      # Resolved from the stack, not hardcoded. The whole point of this project
+      # is that the invoke URL changes when the account does; a test suite with
+      # the URL pasted into it would be testing the old account forever.
+      - name: Resolve the API base URL from the stack
+        id: url
+        run: |
+          set -euo pipefail
+          URL=$(aws cloudformation describe-stacks --stack-name releasebot-edge \
+            --query "Stacks[0].Outputs[?OutputKey=='TestInvokeUrl'].OutputValue" --output text)
+          [ -n "$URL" ] && [ "$URL" != "None" ] || { echo "::error::could not resolve the API URL"; exit 1; }
+          echo "base=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve the signing secret
+        id: sec
+        run: |
+          set -euo pipefail
+          S=$(aws secretsmanager get-secret-value \
+                --secret-id releasebot/test/slack-signing-secret \
+                --query SecretString --output text)
+          # Masked before it can appear in any later log line.
+          echo "::add-mask::$S"
+          echo "sig=$S" >> "$GITHUB_OUTPUT"
+
+      - name: Contract suite
+        id: run
+        env:
+          SLACK_SIGNING_SECRET: ${{ steps.sec.outputs.sig }}
+          JIRA_WEBHOOK_SECRET: ${{ secrets.JIRA_WEBHOOK_SECRET }}
+        run: |
+          go run ./cmd/contracttest \
+            -base "${{ steps.url.outputs.base }}" \
+            -env "${{ matrix.account }}" \
+            -repo "${{ vars.SHADOW_REPO || 'msnbc/releasebot-shadow' }}" \
+            ${{ vars.ENABLE_MUTATING_CHECKS == 'true' && '-mutating' || '' }} \
+            -junit "contract-${{ matrix.account }}.xml" \
+            -summary "$GITHUB_STEP_SUMMARY" \
+            -metrics "metrics-${{ matrix.account }}.json"
+
+      # Always, even on failure: a failed run that publishes no metric looks
+      # identical to a run that never happened, and the staleness alarm then
+      # fires for the wrong reason.
+      - name: Publish metrics to CloudWatch
+        if: always()
+        run: |
+          [ -f "metrics-${{ matrix.account }}.json" ] || exit 0
+          aws cloudwatch put-metric-data --namespace ReleaseBot \
+            --metric-data "file://metrics-${{ matrix.account }}.json"
+
+      - name: Publish the test report
+        if: always()
+        uses: mikepenz/action-junit-report@v4
+        with:
+          report_paths: contract-*.xml
+          check_name: contract (${{ matrix.account }})
+          fail_on_failure: true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: contract-${{ matrix.account }}, path: 'contract-*.xml'}
+
+  # During the parallel run this is the evidence that matters: not "prod passed"
+  # but "prod and dev produced the same result".
+  compare-accounts:
+    needs: deployed
+    if: ${{ always() && github.event.inputs.target == 'both-accounts' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {pattern: contract-*, merge-multiple: true}
+      - name: Diff the two accounts' results
+        run: |
+          set -uo pipefail
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET, glob, sys
+          def results(p):
+              try: t = ET.parse(p)
+              except Exception: return None
+              return {c.get('name'): (c.find('failure') is None)
+                      for c in t.iter('testcase')}
+          dev, prod = results('contract-dev.xml'), results('contract-prod.xml')
+          print("## Parallel-run comparison\n")
+          if not dev or not prod:
+              print("⚠️ One account produced no report — cannot compare.")
+              sys.exit(0)
+          names = sorted(set(dev) | set(prod))
+          diffs = [n for n in names if dev.get(n) != prod.get(n)]
+          if not diffs:
+              print(f"✅ **Both accounts agree on all {len(names)} checks.**")
+              print("\nThis is the production-readiness evidence: the accounts are not")
+              print("merely both green, they are green *in the same way*.")
+          else:
+              print(f"🔴 **{len(diffs)} checks disagree between accounts.** Do not cut over.\n")
+              print("| Check | dev | prod |"); print("|---|---|---|")
+              for n in diffs:
+                  f = lambda v: "—" if v is None else ("pass" if v else "**FAIL**")
+                  print(f"| {n} | {f(dev.get(n))} | {f(prod.get(n))} |")
+          PY

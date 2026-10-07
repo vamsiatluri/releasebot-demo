@@ -10,6 +10,14 @@ Parameters:
   CutReleaseTestAliasArn:  {Type: String}
   MergebackAliasArn:       {Type: String}
   MergebackTestAliasArn:   {Type: String}
+  # Qualified "functionName:alias" pairs for the stage variables. Explicit
+  # parameters rather than derived from the ARNs with Fn::Select -- CFN resolves
+  # Fn::Select during change-set creation and the derived form failed there.
+  # Clear beats clever in a file someone debugs at 2am.
+  CutReleaseQualified:     {Type: String, Default: 'cutRelease:live'}
+  CutReleaseTestQualified: {Type: String, Default: 'cutReleaseTest:live'}
+  MergebackQualified:      {Type: String, Default: 'releaseAutomationMergeback:live'}
+  MergebackTestQualified:  {Type: String, Default: 'releaseAutomationMergebackTest:live'}
   DomainName:
     Type: String
     Default: ''
@@ -57,10 +65,19 @@ Resources:
     Type: AWS::ApiGateway::Resource
     Properties: {RestApiId: !Ref Api, ParentId: !Ref BetaResource, PathPart: health}
 
-  # The integration URI resolves ${stageVariables.lambdaArn} at request time.
-  # That is what lets ONE deployment serve both stages: the prod stage points at
-  # the prod alias, the test stage at the test alias, and promoting is a stage
+  # The integration URI resolves a stage variable at request time. That is what
+  # lets ONE deployment serve both stages: the prod stage points at the prod
+  # function+alias, the test stage at the test one, and repointing is a stage
   # variable change -- no redeploy, no second API, no drift between them.
+  #
+  # ⚠️ The stage variable may ONLY supply the FUNCTION NAME component. Putting
+  # the whole ARN in one -- `.../functions/${stageVariables.cutArn}/invocations`
+  # -- is rejected at method creation with "Invalid lambda function ARN", because
+  # API Gateway validates the URI shape up front and a bare variable is not a
+  # parseable ARN. The rest of the ARN must be literal. Proven the hard way in a
+  # sandbox account on 2026-10-07; CloudFormation does not catch it, the API does.
+  #
+  # The stage variable carries "functionName:alias", e.g. "cutRelease:live".
   CutMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -71,7 +88,7 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${!stageVariables.cutArn}/invocations'
+        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${!stageVariables.cutFn}/invocations'
 
   MergeMethod:
     Type: AWS::ApiGateway::Method
@@ -83,7 +100,7 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${!stageVariables.mergeArn}/invocations'
+        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${!stageVariables.mergeFn}/invocations'
 
   HealthMethod:
     Type: AWS::ApiGateway::Method
@@ -95,7 +112,7 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${!stageVariables.cutArn}/invocations'
+        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${!stageVariables.cutFn}/invocations'
 
   Deployment:
     Type: AWS::ApiGateway::Deployment
@@ -116,8 +133,8 @@ Resources:
       DeploymentId: !Ref Deployment
       StageName: prod
       Variables:
-        cutArn: !Ref CutReleaseAliasArn
-        mergeArn: !Ref MergebackAliasArn
+        cutFn: !Ref CutReleaseQualified
+        mergeFn: !Ref MergebackQualified
       TracingEnabled: true
       MethodSettings:
         - ResourcePath: '/*'
@@ -146,8 +163,8 @@ Resources:
       DeploymentId: !Ref Deployment
       StageName: test
       Variables:
-        cutArn: !Ref CutReleaseTestAliasArn
-        mergeArn: !Ref MergebackTestAliasArn
+        cutFn: !Ref CutReleaseTestQualified
+        mergeFn: !Ref MergebackTestQualified
       TracingEnabled: true
       MethodSettings:
         - ResourcePath: '/*'

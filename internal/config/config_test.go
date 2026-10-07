@@ -20,6 +20,15 @@ func TestWithAliasOverridesRarcEnv(t *testing.T) {
 	if got := base.WithAlias("41").Env; got != "test" {
 		t.Fatalf("numeric version changed the env: got %q", got)
 	}
+	// `live` is a deployment pointer, not an environment. Mapping it to prod
+	// made every test-stage function report itself as prod, because every
+	// function is fronted by a `live` alias. Regression guard.
+	if got := base.WithAlias("live").Env; got != "test" {
+		t.Fatalf("the `live` alias overrode RARC_ENV: got %q, want test", got)
+	}
+	if got := (Config{Env: "prod"}).WithAlias("live").Env; got != "prod" {
+		t.Fatalf("the `live` alias changed a prod config: got %q", got)
+	}
 }
 
 func TestRedactedNeverCarriesASecretValue(t *testing.T) {

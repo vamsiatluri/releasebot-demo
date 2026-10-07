@@ -103,7 +103,19 @@ func Load(ctx context.Context, resolve SecretResolver) (Config, error) {
 // load-bearing only if the alias proposal is approved.
 func (c Config) WithAlias(alias string) Config {
 	switch strings.ToLower(alias) {
-	case "prod", "production", "live":
+	// ⚠️ `live` is deliberately NOT here. Every function is fronted by a `live`
+	// alias -- that is the rollback mechanism -- so mapping it to prod made
+	// cutReleaseTest, invoked as cutReleaseTest:live, override its own
+	// RARC_ENV=test and report itself as prod. The test stage answered
+	// {"ok":true,"env":"prod"}. Caught by the contract suite on the first deploy
+	// to a real account, 2026-10-07; no unit test or local run could see it,
+	// because neither invokes through an alias.
+	//
+	// A DEPLOYMENT POINTER (live, blue, green) and an ENVIRONMENT (prod, test)
+	// are different things that are both spelled as a Lambda alias. Only the
+	// second may decide configuration; an unrecognised alias leaves RARC_ENV in
+	// charge, which is the safe default for a service that can write to main.
+	case "prod", "production":
 		c.Env = "prod"
 	case "test", "beta", "staging":
 		c.Env = "test"

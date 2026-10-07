@@ -25,9 +25,23 @@ Parameters:
     Type: String
     Default: releasebot
     Description: Secrets Manager name prefix this account's functions may read.
+  SetApiGatewayAccountRole:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'false'
+    Description: >
+      API Gateway execution logging (a stage's LoggingLevel / MethodSettings) is
+      gated on an ACCOUNT-LEVEL CloudWatch role, one per account per region. A
+      fresh account has none, and a stage that asks for logging fails with
+      "CloudWatch Logs role ARN must be set in account settings" -- which reads
+      like a stage problem and is not. It lives here rather than in the API stack
+      because AWS::ApiGateway::Account is a singleton: owning it from an app
+      stack means deleting that stack silently disables logging for every other
+      API in the account. Set true once per account+region.
 
 Conditions:
   MakeProvider: !Equals [!Ref CreateOIDCProvider, 'true']
+  SetApiAccount: !Equals [!Ref SetApiGatewayAccountRole, 'true']
 
 Resources:
 
@@ -117,6 +131,25 @@ Resources:
                 Condition:
                   StringEquals:
                     iam:PassedToService: lambda.amazonaws.com
+
+  ApiGatewayCloudWatchRole:
+    Type: AWS::IAM::Role
+    Condition: SetApiAccount
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: apigateway.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs'
+
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Condition: SetApiAccount
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchRole.Arn
 
   CutReleaseExecutionRole:
     Type: AWS::IAM::Role
