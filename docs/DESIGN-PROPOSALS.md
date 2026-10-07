@@ -9,6 +9,13 @@ land the migration like-for-like, and arrive with these written down.
 Phases: **P0** = do it as part of the migration · **P1** = propose for the
 quarter after acceptance · **P2** = raise, do not push.
 
+> **On a three-month contract, P1 and P2 are not a roadmap — they are the
+> handoff.** You will not be there for the quarter after acceptance, so pitching
+> these as "what I'd do next" is pitching work you won't do. Each one is written
+> here with the argument *for*, the argument *against*, and the trap, so the
+> team can decide once you've gone. That is the deliverable. See
+> [90-DAY-PLAN.md](90-DAY-PLAN.md).
+
 ---
 
 ## 1. Collapse the four functions into two, with aliases — **P1**

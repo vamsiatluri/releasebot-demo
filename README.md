@@ -51,6 +51,9 @@ change is required and approved."*
 
 ## Start with these
 
+- **[docs/90-DAY-PLAN.md](docs/90-DAY-PLAN.md)** — the SOW mapped onto twelve
+  weeks, what each phase is really blocked on, and the two calendar collisions
+  (midterm election coverage, year-end freeze) that decide whether it lands.
 - **[docs/DESIGN-PROPOSALS.md](docs/DESIGN-PROPOSALS.md)** — eight changes worth
   proposing, each with the argument *against* it, and each marked for the phase
   it belongs in. Lambda aliases are #1.

@@ -20,11 +20,12 @@ already written. That tells you three things:
 2. **They have already thought about it.** Showing up with a different plan is a
    mistake. Showing up having read *their* plan, agreeing with it, and knowing
    which two phases are the risky ones is the winning move.
-3. **It may well be a contract or SOW-based engagement.** "Resource Profile",
-   "Delivery leadership", "operational handoff" is vendor language. Ask early
-   and without hedging: *"Is this a contract engagement scoped to the migration,
-   or a permanent CloudOps role where this is the first project?"* The answer
-   changes what you optimise for, and asking it signals you read the document.
+3. **It is a three-month contract.** Confirmed. That is the fact that should
+   shape every answer you give: they are buying *delivery of this SOW inside
+   twelve weeks*, not a career. The interview is therefore less "are you a fit"
+   and more "will this land on time without supervision". See
+   **[90-DAY-PLAN.md](90-DAY-PLAN.md)** — read it before the call; it is the
+   half of this prep that most changes your odds.
 
 **The single highest-value thing you can say in the first ten minutes:**
 
@@ -37,6 +38,20 @@ already written. That tells you three things:
 
 That one paragraph tells them you read it, you have done it before, and you
 know where it goes wrong.
+
+**And the single highest-value thing you can say in a *contract* interview —
+see [90-DAY-PLAN.md](90-DAY-PLAN.md) for the full version:**
+
+> "Looking at the calendar: midterms are 3 November, and then there's the
+> year-end freeze. Across a twelve-week contract that could take out four or
+> five of the change windows I'd actually be able to cut over in. So I'd
+> front-load phases 1 through 4 into the election freeze — none of that touches
+> the production system of operation — and target cutover for the back half of
+> November, or January if we slip. How does your freeze calendar actually run?"
+
+Nobody else interviewing will have thought about election coverage. For a news
+organisation, that is the question that says you understand their business and
+not just their AWS account.
 
 ---
 
@@ -355,18 +370,21 @@ should trust you with the riskiest phase.
 
 Pick four. They are diagnostic, not decorative.
 
-1. **"Is this a contract engagement scoped to the migration, or a permanent
-   CloudOps role where this is the first project?"** — ask this first.
-2. **"Who owns the Slack app and the Jira webhook configuration? Are those
+1. **"How does your change-freeze calendar run around election coverage and
+   year-end?"** — ask this first. It is the delivery risk that decides the
+   contract, and asking it marks you as someone who has delivered fixed-scope
+   work at a news organisation's tempo.
+2. **"What's your release cadence, and what does 'production acceptance' mean
+   concretely — one cycle, two, a soak period?"** — this decides whether Phase 7
+   fits inside twelve weeks at all. See 90-DAY-PLAN, "the one structural
+   problem".
+3. **"Who owns the Slack app and the Jira webhook configuration? Are those
    changes I can make, or do they go through another team?"** — the cutover is
    those URLs. If a different team owns them with a two-week change window, the
    project plan is wrong and you will be the one who finds out.
-3. **"Is the ReleaseBot source in a repo you control, with the existing
+4. **"Is the ReleaseBot source in a repo you control, with the existing
    workflows, or is some of it configured by hand in the console?"** — asks
    whether the baseline will match the templates without accusing anyone.
-4. **"What does 'production acceptance' mean concretely — one release cycle, a
-   soak period, a named sign-off?"** — the decommission gate is the only truly
-   irreversible step and you want it defined before you start.
 5. **"Is there a non-production GitHub org or a repo you're comfortable having a
    test bot cut real branches in?"** — you cannot validate a release bot without
    cutting a release. Proposing the shadow repo shows you have thought past the
@@ -375,6 +393,8 @@ Pick four. They are diagnostic, not decorative.
    bit you that I should assume will bite here?"** — free risk register.
 7. **"Who's on call for ReleaseBot after handoff, and what do they have today?"**
    — "operational ownership" is a deliverable in their own acceptance criteria.
+8. **"Is there a path to extension or conversion, and what would it depend on?"**
+   — costs nothing, and the answer tells you how to spend twelve weeks.
 
 ---
 
@@ -390,7 +410,9 @@ Pick four. They are diagnostic, not decorative.
       adjacent-true-thing answer for each. **Volunteer the Go one early** —
       pre-empting it is strength; being caught by it is not.
 - [ ] Have the repo open in a tab. Do not screen-share unprompted; offer it.
-- [ ] Ask about contract vs permanent in the first five minutes.
+- [ ] Raise the freeze calendar (midterms + year-end) in the first ten minutes.
+- [ ] Raise the Phase 7 / acceptance-soak collision — unprompted.
+- [ ] Know your rate floor and which structure (W2 / C2C / 1099) before the call.
 - [ ] Say "I'd run it in your phase order" out loud at least once.
 
 ---
@@ -412,3 +434,9 @@ Pick four. They are diagnostic, not decorative.
   of the interview.
 - **Don't lead with Jenkins.** Your positioning is GitHub Actions and AWS, which
   is what they use.
+- **Don't pitch the P1 proposals as "what I'd do next."** On a twelve-week
+  contract you will not be there for next. They are written handoff
+  recommendations, and saying so is what makes you sound like someone who has
+  done contract work.
+- **Don't give a rate before you know the structure.** W2 through a vendor, C2C
+  and 1099 need different headline numbers for the same take-home.
