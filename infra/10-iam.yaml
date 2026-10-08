@@ -12,6 +12,25 @@ Parameters:
   GitHubRepo:
     Type: String
     Default: releasebot
+  GitHubOwnerId:
+    Type: String
+    Default: ''
+    Description: >
+      Numeric account id of the repo owner (gh api user --jq .id).
+  GitHubRepoId:
+    Type: String
+    Default: ''
+    Description: >
+      Numeric repository id (gh api repos/<owner>/<repo> --jq .id).
+
+      ⚠️ GitHub is migrating accounts to an IMMUTABLE-ID subject claim. On a
+      migrated account the token's `sub` is
+      repo:<owner>@<ownerId>/<repo>@<repoId>:ref:refs/heads/main
+      -- NOT the familiar repo:<owner>/<repo>:ref:... form. A trust policy
+      written for the old shape denies EVERY assume-role, and the error says
+      nothing about why. This account is already on the new form (cost an hour
+      to find on a previous project). Supply both ids and the policy trusts
+      both shapes; leave them empty and it trusts only the legacy shape.
   CreateOIDCProvider:
     Type: String
     AllowedValues: ['true', 'false']
@@ -41,6 +60,9 @@ Parameters:
 
 Conditions:
   MakeProvider: !Equals [!Ref CreateOIDCProvider, 'true']
+  HasImmutableIds: !And
+    - !Not [!Equals [!Ref GitHubOwnerId, '']]
+    - !Not [!Equals [!Ref GitHubRepoId, '']]
   SetApiAccount: !Equals [!Ref SetApiGatewayAccountRole, 'true']
 
 Resources:
@@ -78,9 +100,14 @@ Resources:
               # from a fork -- assume a role that can rewrite production
               # Lambdas.
               StringLike:
-                token.actions.githubusercontent.com:sub:
-                  - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/main'
-                  - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
+                token.actions.githubusercontent.com:sub: !If
+                  - HasImmutableIds
+                  - - !Sub 'repo:${GitHubOrg}@${GitHubOwnerId}/${GitHubRepo}@${GitHubRepoId}:ref:refs/heads/main'
+                    - !Sub 'repo:${GitHubOrg}@${GitHubOwnerId}/${GitHubRepo}@${GitHubRepoId}:environment:production'
+                    - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/main'
+                    - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
+                  - - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/main'
+                    - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
       Policies:
         - PolicyName: releasebot-deploy
           PolicyDocument:
