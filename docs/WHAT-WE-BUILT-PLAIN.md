@@ -249,6 +249,25 @@ shape of the problems this job is made of: nothing was broken, every component w
 the documentation technically said so, and the error message pointed at the wrong
 thing.
 
+### And then a second one, found the same way
+
+The next release failed at the step that posts the message. The reason:
+**the chat feature had never been saved into the project.** It was running in the
+cloud, it worked, everyone could see it — and it existed nowhere but one laptop.
+
+Which meant something worse than a missing file. **The release system had never
+actually sent that message.** Every one anyone had seen was sent by hand while the
+button was being built. It was being *demonstrated*, not *used* — and a step that has
+never run on its own is not a step, it is an assumption.
+
+> **Deployed is not committed, and a running system is not a record of itself.**
+
+Nothing warned about this, because nothing was broken. The thing that caught it was a
+release failing for an unrelated reason, and someone actually reading why.
+
+**That is the whole job, in one sentence:** the dangerous problems in a migration are
+not the ones that break. They are the ones that work, in a way nobody wrote down.
+
 ### A detour worth telling, because it is a good instinct story
 
 Slack hid the setting I needed and said, helpfully, *"you won't need this."* It was

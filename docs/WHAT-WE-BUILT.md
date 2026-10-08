@@ -416,6 +416,39 @@ GitHub API was called. **The last step is refused by GitHub itself.**
 > for. The token is not under-scoped; it is **the wrong kind of token**, and no
 > amount of adding permissions to it will ever work.
 
+### The second one, found the same way
+
+With the token diagnosed, the next run's `notify-gate` job failed:
+
+```
+unknown status: awaiting
+Process completed with exit code 2
+```
+
+The notifier's committed copy handled only `promoted` and `failed`. The
+`awaiting` arm — the Block Kit message that carries the Approve button — existed
+only in a working tree. So did the approval function, its tests, and its
+CloudFormation template:
+
+```
+ M scripts/ci-slack-notify.sh
+?? cmd/slackapprove/
+?? infra/50-slack-approve.yaml
+?? internal/slackapprove/
+```
+
+> ⚠️ **Deployed is not committed, and running infrastructure is not a record of
+> itself.** The endpoint was live and working, so nothing failed and nothing
+> complained. `git status` had been saying it for hours.
+
+The consequence is sharper than a missing file: **the pipeline had never once
+sent the gate notification.** Every message in the channel had been posted by
+hand while building the button. The notification was being demonstrated, not
+exercised — and an unexercised step is not a step, it is a belief.
+
+Committed, pushed, and the next run logged `slack: notified (awaiting)` with the
+message confirmed rendered in the channel rather than inferred from an HTTP 200.
+
 **Remaining work is one credential**, and deliberately not one I minted: a classic
 token with `repo`, swapped in via `GitHubApprovalToken` on the `releasebot-slack-approve`
 stack. The account's `gh` CLI token would work — it carries `repo` — but it also
