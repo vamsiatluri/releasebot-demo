@@ -22,6 +22,16 @@ name: release
 on:
   push:
     branches: [main]
+    # A documentation commit must not create a release candidate. It did: a
+    # docs-only push built, deployed to test, and parked a second approval
+    # request in the channel beside the first. Two pending approvals for the
+    # same code is how a gate stops being read and starts being clicked
+    # through -- and an approval gate that gets rubber-stamped is worse than
+    # no gate, because it still looks like a control.
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
   workflow_dispatch:
 
 permissions:
@@ -147,6 +157,25 @@ jobs:
           [ -f metrics-test.json ] || exit 0
           aws cloudwatch put-metric-data --namespace ReleaseBot --metric-data file://metrics-test.json
 
+  # Fires the moment the gate engages. `prod` cannot start until a human approves,
+  # so this runs alongside that wait and tells somebody the decision is theirs --
+  # with the steps, because a notification that says a decision is needed without
+  # saying where to make it only moves the question.
+  notify-gate:
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tell Slack an approval is waiting
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          bash scripts/ci-slack-notify.sh awaiting \
+            "${{ needs.build.outputs.sha }}" \
+            "${{ github.actor }}" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            "${{ github.run_id }}"
+
   prod:
     needs: [build, test]
     runs-on: ubuntu-latest
@@ -240,7 +269,7 @@ jobs:
   # good news -- and a quiet channel then looks identical to a healthy one, which
   # is the same failure mode as an alarm that cannot fire.
   notify-failure:
-    needs: [build, test, prod]
+    needs: [build, test, notify-gate, prod]
     if: ${{ always() && contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
     steps:
