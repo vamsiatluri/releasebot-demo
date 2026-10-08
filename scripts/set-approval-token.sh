@@ -25,14 +25,28 @@ export AWS_PROFILE STACK REGION
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ⚠️ `read` returns 1 when it hits EOF without seeing its delimiter, EVEN THOUGH
+# it has populated the variable. `pbpaste` emits no trailing newline, so under
+# `set -e` this line exited the script -- silently, before a single line of
+# output, with the token read correctly and then thrown away. The symptom is a
+# command that appears to do nothing at all.
+TOKEN=""
 if [ "${1:-}" = "--stdin" ]; then
-  IFS= read -r TOKEN
+  IFS= read -r TOKEN || true
 else
   printf 'classic PAT (repo scope), input hidden: ' >&2
-  IFS= read -rs TOKEN
+  IFS= read -rs TOKEN || true
   printf '\n' >&2
 fi
-[ -n "${TOKEN:-}" ] || { echo "no token given" >&2; exit 2; }
+
+# A clipboard copy routinely carries a trailing newline, a stray space, or CRLF
+# from a browser. A token is alphanumerics and underscores, so stripping every
+# whitespace character cannot damage a valid one -- and a token with an
+# invisible newline on the end fails authentication with a 401 that looks like
+# the wrong token rather than the right one, badly pasted.
+TOKEN=$(printf '%s' "$TOKEN" | tr -d '[:space:]')
+
+[ -n "$TOKEN" ] || { echo "no token on stdin (is the clipboard empty?)" >&2; exit 2; }
 
 case "$TOKEN" in
   github_pat_*)

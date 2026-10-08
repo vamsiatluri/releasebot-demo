@@ -1,9 +1,9 @@
 # Anchored with a leading slash on purpose: a bare `build` also matches any
 # directory named build at any depth.
+#
+# This now also covers assess.sh's output, which is a real account's inventory --
+# resource names, role names, environment variable NAMES, API ids. No secret
+# VALUES are ever captured, but on a public repo that is still somebody's
+# infrastructure described in full.
 /build/
 *.zip
-
-# Assessment output. These hold a real account's inventory -- resource names,
-# role names, environment variable NAMES, API ids. No secret VALUES, but on a
-# public repo it is still somebody's infrastructure laid out in full.
-build/
