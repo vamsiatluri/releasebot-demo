@@ -208,6 +208,19 @@ jobs:
           [ -f metrics-prod.json ] || exit 0
           aws cloudwatch put-metric-data --namespace ReleaseBot --metric-data file://metrics-prod.json
 
+      # The PIPELINE notifies, not a person and not a chat assistant. That is the
+      # distinction worth keeping: a release notification nobody has to remember
+      # to send is the only kind that stays accurate.
+      - name: Tell Slack what shipped
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          PROD_HEALTH_URL: https://0aohv0kx5k.execute-api.us-east-1.amazonaws.com/prod/beta/health
+        run: |
+          bash scripts/ci-slack-notify.sh promoted \
+            "${{ needs.build.outputs.sha }}" \
+            "${{ github.actor }}" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
       - name: Record what shipped
         run: |
           {
@@ -222,3 +235,21 @@ jobs:
             echo ""
             echo "No rebuild happened between test and production. These are the same bytes."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # A release that fails must say so. Without this, the channel only ever carries
+  # good news -- and a quiet channel then looks identical to a healthy one, which
+  # is the same failure mode as an alarm that cannot fire.
+  notify-failure:
+    needs: [build, test, prod]
+    if: ${{ always() && contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tell Slack the release failed
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          bash scripts/ci-slack-notify.sh failed \
+            "${{ needs.build.outputs.sha || github.sha }}" \
+            "${{ github.actor }}" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
