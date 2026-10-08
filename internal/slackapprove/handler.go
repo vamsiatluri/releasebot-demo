@@ -93,7 +93,15 @@ type Interaction struct {
 type Result struct {
 	Status  int
 	Body    string
-	Message string // what to post back to Slack
+	Message string // what to say back in the channel, if anything
+
+	// Where to say it. ⚠️ A Block Kit `block_actions` interaction does NOT take
+	// its reply from the HTTP response -- that is legacy attachment-message
+	// behaviour. Slack reads the HTTP response only for its status, and an
+	// update must be POSTed to this URL. Returning the message in the response
+	// body looks correct, returns 200, and is silently discarded: the click
+	// appears to do nothing at all.
+	ResponseURL string
 }
 
 // Handle processes one Slack interaction. rawBody must be the exact bytes Slack
@@ -129,7 +137,7 @@ func (c Config) Handle(ctx context.Context, rawBody []byte, signature, timestamp
 		// the thing that tells an operator what to configure, instead of a
 		// lookup they have to go and perform. It reveals nothing a member of
 		// the workspace cannot already see.
-		return Result{Status: 200, Body: "",
+		return Result{Status: 200, Body: "", ResponseURL: in.ResponseURL,
 			Message: fmt.Sprintf(":no_entry: <@%s> (`%s`) is not on the approver list for "+
 				"production. Approval is restricted regardless of who can post in this channel.\n"+
 				"_To permit this person, add `%s` to SLACK_APPROVERS._",
@@ -138,16 +146,17 @@ func (c Config) Handle(ctx context.Context, rawBody []byte, signature, timestamp
 
 	runID := strings.TrimSpace(in.Actions[0].Value)
 	if runID == "" {
-		return Result{Status: 200, Body: "", Message: ":warning: that button carried no run id."}
+		return Result{Status: 200, Body: "", ResponseURL: in.ResponseURL,
+			Message: ":warning: that button carried no run id."}
 	}
 
 	if err := c.approve(ctx, runID, in.User.Name); err != nil {
 		audit("approve.failed", in.User.ID, runID, err.Error())
-		return Result{Status: 200, Body: "",
+		return Result{Status: 200, Body: "", ResponseURL: in.ResponseURL,
 			Message: ":x: Could not approve run `" + runID + "`: " + err.Error()}
 	}
 	audit("approved", in.User.ID, runID, "production")
-	return Result{Status: 200, Body: "",
+	return Result{Status: 200, Body: "", ResponseURL: in.ResponseURL,
 		Message: fmt.Sprintf(":white_check_mark: Approved by <@%s>. Run `%s` is deploying to production now.",
 			in.User.ID, runID)}
 }
