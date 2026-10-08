@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ReleaseBot — environment status</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+<style>
+  :root{
+    --ground:#EDF1F3; --surface:#fff; --surface-2:#F5F8F9;
+    --ink:#15212B; --ink-2:#2C3C48; --muted:#5D6F7C; --rule:#D3DCE1;
+    --signal:#0B6E78; --warn:#9C6410; --warn-soft:#F4E8D6;
+    --clear:#2C7355; --clear-soft:#DCEDE4;
+    --blocking:#A4382A; --blocking-soft:#F2DEDA;
+    --display:'Archivo',system-ui,sans-serif;
+    --body:'Source Serif 4',Georgia,serif;
+    --mono:'IBM Plex Mono',ui-monospace,monospace;
+  }
+  @media (prefers-color-scheme:dark){ :root{
+    --ground:#0B1218; --surface:#111C24; --surface-2:#16242D;
+    --ink:#E2EAEF; --ink-2:#C3D1DA; --muted:#8597A4; --rule:#24353F;
+    --signal:#45B0BA; --warn:#DBA85A; --warn-soft:#352717;
+    --clear:#63B892; --clear-soft:#15301F;
+    --blocking:#DB7764; --blocking-soft:#3A1F1A;
+  }}
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--ground); color:var(--ink);
+       font-family:var(--body); font-size:16px; line-height:1.6;
+       -webkit-font-smoothing:antialiased}
+  header{background:var(--surface); border-bottom:1px solid var(--rule)}
+  .mast{max-width:980px; margin:0 auto; padding:26px 24px 22px;
+        display:flex; flex-wrap:wrap; gap:14px 28px; align-items:flex-end; justify-content:space-between}
+  .lbl{font-family:var(--display); font-size:11px; font-weight:600;
+       letter-spacing:.12em; text-transform:uppercase; color:var(--muted)}
+  h1{font-family:var(--display); font-size:clamp(25px,4vw,36px); font-weight:700;
+     letter-spacing:-.02em; margin:4px 0 0}
+  h2{font-family:var(--display); font-size:19px; font-weight:600; margin:0}
+  .wrap{max-width:980px; margin:0 auto; padding:0 24px 72px}
+  section{margin-top:36px}
+  .sechead{margin-bottom:12px}
+  .sechead p{margin:4px 0 0; color:var(--muted); font-size:14.5px; max-width:62ch}
+  .mono{font-family:var(--mono); font-variant-numeric:tabular-nums}
+  button{font-family:var(--display); font-size:14px; font-weight:600;
+         padding:10px 18px; border-radius:4px; border:1px solid var(--signal);
+         background:var(--signal); color:#fff; cursor:pointer}
+  button.ghost{background:transparent; color:var(--ink-2); border-color:var(--rule)}
+  button:focus-visible{outline:2px solid var(--signal); outline-offset:2px}
+
+  .gate{display:grid; place-items:center; min-height:70vh; padding:24px}
+  .card{background:var(--surface); border:1px solid var(--rule); border-radius:6px;
+        padding:34px 36px; max-width:420px; text-align:center}
+  .card p{color:var(--muted); font-size:15px}
+
+  .banner{border-radius:4px; padding:16px 20px; margin-top:16px; border:1px solid}
+  .banner.ok{background:var(--clear-soft); border-color:var(--clear)}
+  .banner.held{background:var(--warn-soft); border-color:var(--warn)}
+  .banner strong{font-family:var(--display); display:block; font-size:14px; margin-bottom:3px}
+  .banner.ok strong{color:var(--clear)} .banner.held strong{color:var(--warn)}
+  .banner p{margin:0; font-size:14.5px; color:var(--ink-2)}
+
+  .grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:14px}
+  .tile{background:var(--surface); border:1px solid var(--rule); border-radius:5px; padding:18px 20px}
+  .tile h3{font-family:var(--display); font-size:14px; font-weight:600; margin:0 0 10px}
+  .row{display:flex; justify-content:space-between; gap:16px; padding:7px 0;
+       border-bottom:1px solid var(--rule); font-size:14px}
+  .row:last-child{border-bottom:none}
+  .row span:first-child{color:var(--muted)}
+  .pill{font-family:var(--display); font-size:10.5px; font-weight:600; letter-spacing:.08em;
+        text-transform:uppercase; padding:3px 8px; border-radius:2px}
+  .pill.ok{background:var(--clear-soft); color:var(--clear)}
+  .pill.held{background:var(--warn-soft); color:var(--warn)}
+  .pill.bad{background:var(--blocking-soft); color:var(--blocking)}
+  .sha{font-family:var(--mono); font-size:11.5px; color:var(--muted); word-break:break-all}
+  footer{margin-top:40px; padding-top:18px; border-top:1px solid var(--rule);
+         font-family:var(--mono); font-size:12px; color:var(--muted);
+         display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between}
+
+  /* ── the walkthrough ─────────────────────────────────────────────────── */
+  .flow{background:var(--surface); border:1px solid var(--rule); border-radius:5px; padding:22px 24px}
+  .track{display:flex; gap:0; align-items:stretch; overflow-x:auto; padding-bottom:6px}
+  .step{flex:1 0 108px; text-align:center; position:relative; padding:0 4px; cursor:pointer;
+        background:none; border:none; font:inherit; color:inherit}
+  .step .dot{width:17px; height:17px; border-radius:50%; margin:0 auto 9px;
+             border:2px solid var(--rule); background:var(--surface); transition:.25s}
+  .step .bar{position:absolute; top:7px; left:50%; width:100%; height:2px; background:var(--rule); z-index:0}
+  .step:last-child .bar{display:none}
+  .step .nm{font-family:var(--display); font-size:11.5px; font-weight:600; color:var(--muted);
+            line-height:1.3; transition:.25s; position:relative; z-index:1}
+  .step.done .dot{border-color:var(--clear); background:var(--clear)}
+  .step.done .bar{background:var(--clear)}
+  .step.now  .dot{border-color:var(--signal); background:var(--signal);
+                  box-shadow:0 0 0 5px color-mix(in srgb, var(--signal) 22%, transparent)}
+  .step.now  .nm{color:var(--ink)}
+  .step.gate .dot{border-color:var(--warn)}
+  .step.gate.done .dot{background:var(--warn)}
+  .detail{margin-top:20px; border-top:1px solid var(--rule); padding-top:18px;
+          display:grid; grid-template-columns:1fr auto; gap:18px 24px; align-items:start}
+  .detail h3{font-family:var(--display); font-size:17px; margin:0 0 6px}
+  .detail p{margin:0; color:var(--ink-2); font-size:15px; max-width:64ch}
+  .detail .pre{font-family:var(--mono); font-size:11.5px; color:var(--muted);
+               background:var(--surface-2); border:1px solid var(--rule); border-radius:4px;
+               padding:10px 12px; margin-top:12px; overflow-x:auto; white-space:pre; line-height:1.7}
+  .ctl{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+  .ctl .num{font-family:var(--mono); font-size:12px; color:var(--muted); min-width:42px}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+
+<div id="gate" class="gate">
+  <div class="card">
+    <span class="lbl">ReleaseBot</span>
+    <h1 style="font-size:26px">Environment status</h1>
+    <p id="gate-msg">Sign in to see what each environment is running.</p>
+    <button id="signin">Sign in</button>
+  </div>
+</div>
+
+<div id="app" hidden>
+  <header>
+    <div class="mast">
+      <div>
+        <span class="lbl">ReleaseBot · environment status</span>
+        <h1>What is running, right now</h1>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center">
+        <span class="mono" id="who" style="font-size:12px; color:var(--muted)"></span>
+        <button class="ghost" id="refresh">Refresh</button>
+        <button class="ghost" id="signout">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <div id="verdict"></div>
+
+    <section>
+      <div class="sechead">
+        <h2>Same bytes in both places?</h2>
+        <p>Each pair is one program and its test twin. Identical fingerprints mean production
+           is running exactly what test validated — nothing was rebuilt in between.</p>
+      </div>
+      <div class="grid" id="pairs"></div>
+    </section>
+
+    <section>
+      <div class="sechead">
+        <h2>What each environment answers</h2>
+        <p>Read live from the deployed system when this page loaded, not from anything the
+           pipeline wrote down.</p>
+      </div>
+      <div class="grid" id="health"></div>
+    </section>
+
+
+    <section>
+      <div class="sechead">
+        <h2>How a change reaches production</h2>
+        <p>The real path, with the artifacts from run 37840483976. Press play, or click any
+           step.</p>
+      </div>
+      <div class="flow">
+        <div class="track" id="track"></div>
+        <div class="detail">
+          <div>
+            <h3 id="f-title"></h3>
+            <p id="f-body"></p>
+            <div class="pre" id="f-pre"></div>
+          </div>
+          <div class="ctl">
+            <span class="num" id="f-num"></span>
+            <button class="ghost" id="f-prev">Back</button>
+            <button id="f-play">Play</button>
+            <button class="ghost" id="f-next">Next</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <span id="stamp"></span>
+      <span id="acct"></span>
+    </footer>
+  </div>
+</div>
+
+<script>
+const LOGIN_DOMAIN = '__LOGIN_DOMAIN__';
+const CLIENT_ID    = '__CLIENT_ID__';
+const REDIRECT     = window.location.origin + '/';
+
+// ── PKCE ─────────────────────────────────────────────────────────────────────
+// Authorization-code flow with PKCE and no client secret. A secret shipped to a
+// browser is not a secret; PKCE is what replaces it.
+const b64url = b => btoa(String.fromCharCode(...new Uint8Array(b)))
+  .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+
+async function sha256(s){ return crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)); }
+
+function randomString(){
+  const a = new Uint8Array(32); crypto.getRandomValues(a);
+  return b64url(a.buffer);
+}
+
+async function beginSignIn(){
+  const verifier = randomString();
+  sessionStorage.setItem('pkce_verifier', verifier);
+  const challenge = b64url(await sha256(verifier));
+  const u = new URL(LOGIN_DOMAIN + '/oauth2/authorize');
+  u.searchParams.set('client_id', CLIENT_ID);
+  u.searchParams.set('response_type', 'code');
+  u.searchParams.set('scope', 'openid email');
+  u.searchParams.set('redirect_uri', REDIRECT);
+  u.searchParams.set('code_challenge', challenge);
+  u.searchParams.set('code_challenge_method', 'S256');
+  window.location = u.toString();
+}
+
+async function exchange(code){
+  const verifier = sessionStorage.getItem('pkce_verifier');
+  if (!verifier) throw new Error('missing verifier');
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code', client_id: CLIENT_ID,
+    code, redirect_uri: REDIRECT, code_verifier: verifier
+  });
+  const r = await fetch(LOGIN_DOMAIN + '/oauth2/token', {
+    method: 'POST', headers: {'Content-Type':'application/x-www-form-urlencoded'}, body
+  });
+  if (!r.ok) throw new Error('token exchange failed');
+  const t = await r.json();
+  sessionStorage.setItem('id_token', t.id_token);
+  sessionStorage.removeItem('pkce_verifier');
+  // Drop ?code= so a refresh does not try to redeem a one-time code again.
+  history.replaceState({}, '', REDIRECT);
+}
+
+function claims(){
+  const t = sessionStorage.getItem('id_token');
+  if (!t) return null;
+  try { return JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))); }
+  catch { return null; }
+}
+
+// ── Rendering ────────────────────────────────────────────────────────────────
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function render(d){
+  const held = !d.inSync;
+  document.getElementById('verdict').innerHTML = `
+    <div class="banner ${held ? 'held' : 'ok'}">
+      <strong>${held ? 'A release is held at the gate' : 'Production matches test'}</strong>
+      <p>${held
+        ? 'Test is ahead of production. That is the approval gate doing its job — production keeps serving the last approved release until a person approves the next one.'
+        : 'Every pair reports an identical fingerprint. Production is running exactly the bytes test validated.'}</p>
+    </div>`;
+
+  document.getElementById('pairs').innerHTML = d.pairs.map(p => `
+    <div class="tile">
+      <h3>${esc(p.name)}
+        <span class="pill ${p.same ? 'ok' : 'held'}" style="float:right">
+          ${p.same ? 'in sync' : 'test ahead'}</span></h3>
+      <div class="row"><span>production</span>
+        <span class="mono">v${esc(p.prod.version) || '—'}</span></div>
+      <div class="sha">${esc(p.prod.error || p.prod.sha)}</div>
+      <div class="row" style="margin-top:8px"><span>test</span>
+        <span class="mono">v${esc(p.test.version) || '—'}</span></div>
+      <div class="sha">${esc(p.test.error || p.test.sha)}</div>
+    </div>`).join('');
+
+  document.getElementById('health').innerHTML = d.health
+    .sort((a,b) => a.stage.localeCompare(b.stage))
+    .map(h => `
+    <div class="tile">
+      <h3>${esc(h.stage)}
+        <span class="pill ${h.error ? 'bad' : (h.ok ? 'ok' : 'bad')}" style="float:right">
+          ${h.error ? 'unreachable' : (h.ok ? 'healthy' : 'failing')}</span></h3>
+      <div class="row"><span>environment</span><span class="mono">${esc(h.env) || '—'}</span></div>
+      <div class="row"><span>commit</span><span class="mono">${esc(h.commit) || '—'}</span></div>
+      <div class="row"><span>built</span><span class="mono">${esc(h.built) || '—'}</span></div>
+    </div>`).join('');
+
+  document.getElementById('stamp').textContent = 'read live ' + esc(d.readAt);
+  document.getElementById('acct').textContent  = 'account ' + esc(d.account) + ' · ' + esc(d.region);
+}
+
+async function load(){
+  const t = sessionStorage.getItem('id_token');
+  const r = await fetch('/api/state', {headers: {Authorization: 'Bearer ' + t}});
+  if (r.status === 401 || r.status === 403){
+    // The token expired. Say so rather than rendering an empty dashboard,
+    // which reads as "nothing is deployed".
+    sessionStorage.removeItem('id_token');
+    showGate('Your session expired. Sign in again.');
+    return;
+  }
+  if (!r.ok) throw new Error('the status API returned ' + r.status);
+  render(await r.json());
+}
+
+function showGate(msg){
+  document.getElementById('gate-msg').textContent = msg;
+  document.getElementById('gate').hidden = false;
+  document.getElementById('app').hidden = true;
+}
+
+
+// ── The walkthrough ──────────────────────────────────────────────────────────
+// Real values from a real run. Nothing here is illustrative.
+const STEPS = [
+  {n:'Commit', t:'A commit lands on main',
+   b:'Nothing is deployed yet. The pipeline starts itself; no one runs anything by hand.',
+   p:'commit 62c1607\nbranch main'},
+  {n:'Build once', t:'Build, and build only once',
+   b:'Unit tests, static analysis and 13 behaviour checks run against a local stand-in \u2014 free, with no cloud account involved. The artifact is packaged and fingerprinted here, and never rebuilt again.',
+   p:'\u2713 unit tests\n\u2713 vet\n\u2713 13 behaviour checks\n\u2713 packaged \u2192 jzz3Ku7c4jI2BlgQq2pJV+Ho0Tey2w7vxj///sPMYYo='},
+  {n:'Deploy test', t:'Deploy to test',
+   b:'The pipeline proves its identity to AWS and receives credentials that expire within the hour. There is no stored access key anywhere. It publishes an immutable version and moves the test alias to it.',
+   p:'assume role via OIDC \u2014 no stored key\npublish version 12\nalias cutReleaseTest:live \u2192 12'},
+  {n:'Verify test', t:'Prove it on test',
+   b:'Eight checks run against the live endpoint, and the deployed fingerprint is read back and compared with what the build published. A mismatch fails the run.',
+   p:'\u2713 8 behaviour checks on the live endpoint\n\u2713 deployed fingerprint == built fingerprint'},
+  {n:'Gate', t:'The run stops and waits', gate:true,
+   b:'GitHub holds the job. This is an environment protection rule, not a condition inside the workflow \u2014 editing the workflow would not remove it. Slack is notified at the same moment.',
+   p:'status: waiting\nslack: notified (awaiting)\nproduction: untouched'},
+  {n:'Approve', t:'A person approves', gate:true,
+   b:'Two routes. In GitHub, a named reviewer clicks approve. Or the Slack button: the click is signature-checked, the clicker is checked against a named list, and every attempt is written down. The chat route is the weaker control, and it is labelled as such.',
+   p:'AUDIT {"event":"click",   "run_id":"37840483976","slack_user":"U0C7\u2026KNW"}\nAUDIT {"event":"approved","run_id":"37840483976","detail":"production"}'},
+  {n:'Promote', t:'Promote \u2014 with no build step',
+   b:'Production deploys the exact bytes test already validated. There is no compile here. The fingerprint is read back again and compared.',
+   p:'publish version 9\nalias cutRelease:live \u2192 9\nfingerprint jzz3Ku7c4jI2BlgQq2pJV+Ho0Tey2w7vxj///sPMYYo=\n           \u2191 identical to the one test validated'},
+  {n:'Verify prod', t:'Prove it on production',
+   b:'The same eight checks run again, now against production. Both environments report the same fingerprint, which is what makes "we shipped what we tested" a measurement rather than a claim.',
+   p:'\u2713 8 behaviour checks on production\n\u2713 prod fingerprint == test fingerprint'},
+  {n:'Rollback', t:'And if it is wrong',
+   b:'The previous version is still published. Rolling back moves the alias back to it \u2014 one command, seconds, nothing rebuilds and no pipeline runs.',
+   p:'aws lambda update-alias --name live --function-version 8\n\n\u26a0 a version freezes CONFIGURATION too, so rotating a\n  secret invalidates every older version as a target'},
+];
+
+let cur = 0, timer = null;
+
+function paintFlow(){
+  document.getElementById('track').innerHTML = STEPS.map((s,i) => `
+    <button class="step ${i<cur?'done':''} ${i===cur?'now':''} ${s.gate?'gate':''}"
+            data-i="${i}" aria-label="${esc(s.t)}">
+      <span class="bar"></span><span class="dot"></span>
+      <span class="nm">${esc(s.n)}</span>
+    </button>`).join('');
+  const s = STEPS[cur];
+  document.getElementById('f-title').textContent = s.t;
+  document.getElementById('f-body').textContent  = s.b;
+  document.getElementById('f-pre').textContent   = s.p;
+  document.getElementById('f-num').textContent   = (cur+1) + ' / ' + STEPS.length;
+  document.querySelectorAll('.step').forEach(el =>
+    el.onclick = () => { stop(); cur = +el.dataset.i; paintFlow(); });
+}
+
+function stop(){
+  if (timer) { clearInterval(timer); timer = null; }
+  document.getElementById('f-play').textContent = 'Play';
+}
+
+function play(){
+  if (timer) { stop(); return; }
+  if (cur >= STEPS.length - 1) cur = 0;
+  document.getElementById('f-play').textContent = 'Pause';
+  paintFlow();
+  // Slow enough to talk over. The gate steps hold longer because they are the
+  // ones worth dwelling on.
+  timer = setInterval(() => {
+    if (cur >= STEPS.length - 1) { stop(); return; }
+    cur++; paintFlow();
+  }, 4200);
+}
+
+function wireFlow(){
+  document.getElementById('f-play').onclick = play;
+  document.getElementById('f-next').onclick = () => { stop(); if (cur < STEPS.length-1) cur++; paintFlow(); };
+  document.getElementById('f-prev').onclick = () => { stop(); if (cur > 0) cur--; paintFlow(); };
+  paintFlow();
+}
+
+async function start(){
+  document.getElementById('signin').onclick  = () => beginSignIn().catch(e => showGate(e.message));
+  document.getElementById('refresh').onclick = () => load().catch(e => showGate(e.message));
+  document.getElementById('signout').onclick = () => {
+    sessionStorage.removeItem('id_token');
+    window.location = LOGIN_DOMAIN + '/logout?client_id=' + CLIENT_ID +
+      '&logout_uri=' + encodeURIComponent(REDIRECT);
+  };
+
+  const code = new URLSearchParams(window.location.search).get('code');
+  try {
+    if (code) await exchange(code);
+    if (!sessionStorage.getItem('id_token')) return;
+    const c = claims();
+    document.getElementById('who').textContent = c?.email ? 'signed in · ' + c.email : 'signed in';
+    document.getElementById('gate').hidden = true;
+    document.getElementById('app').hidden = false;
+    wireFlow();
+    await load();
+  } catch (e) {
+    showGate(e.message || 'Sign-in failed. Try again.');
+  }
+}
+start();
+</script>
+</body>
+</html>

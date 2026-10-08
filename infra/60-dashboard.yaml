@@ -1,0 +1,264 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  The management dashboard: a private S3 bucket behind CloudFront, a Cognito
+  user pool for sign-in, and a small API returning live pipeline state.
+
+  The API is a SECOND ORIGIN on the same distribution rather than a separate
+  endpoint. Same origin means no CORS at all -- and CORS configured against a
+  CloudFront domain that does not exist until the distribution is created is a
+  circular dependency people usually resolve by allowing "*".
+
+Parameters:
+  ArtifactBucket:   {Type: String}
+  ArtifactKey:      {Type: String, Default: 'releasebot/dashboardapi.zip'}
+  AdminEmail:
+    Type: String
+    Description: >
+      The one person who may sign in. Cognito emails them a temporary password
+      on first create; it is never passed through this template.
+  HealthBase:
+    Type: String
+    Description: Base invoke URL of the ReleaseBot API, without a stage.
+  Stages:
+    Type: String
+    Default: 'prod,test'
+  LogRetentionDays:
+    Type: Number
+    Default: 7
+
+Resources:
+
+  # ── Who may look ────────────────────────────────────────────────────────────
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${AWS::StackName}-users'
+      # Self sign-up OFF. This dashboard has exactly one intended viewer, and a
+      # pool that lets anyone register is a public dashboard with extra steps.
+      AdminCreateUserConfig: {AllowAdminCreateUserOnly: true}
+      AutoVerifiedAttributes: [email]
+      UsernameAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: dashboard
+      # ⚠️ No client secret. This is a browser app: a secret shipped to a
+      # browser is not a secret, and Cognito refuses the PKCE flow with one.
+      GenerateSecret: false
+      AllowedOAuthFlows: [code]
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes: [openid, email]
+      SupportedIdentityProviders: [COGNITO]
+      CallbackURLs: [!Sub 'https://${Distribution.DomainName}/']
+      LogoutURLs: [!Sub 'https://${Distribution.DomainName}/']
+      ExplicitAuthFlows: [ALLOW_REFRESH_TOKEN_AUTH, ALLOW_USER_SRP_AUTH]
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      # Cognito domain prefixes are globally unique, so it carries the account.
+      Domain: !Sub 'releasebot-${AWS::AccountId}'
+
+  AdminUser:
+    Type: AWS::Cognito::UserPoolUser
+    Properties:
+      UserPoolId: !Ref UserPool
+      Username: !Ref AdminEmail
+      DesiredDeliveryMediums: [EMAIL]
+      UserAttributes:
+        - {Name: email, Value: !Ref AdminEmail}
+        - {Name: email_verified, Value: 'true'}
+
+  # ── What it reads ───────────────────────────────────────────────────────────
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement: [{Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}]
+      ManagedPolicyArns: ['arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole']
+      Policies:
+        - PolicyName: read-release-functions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Read-only, and only the four functions this dashboard renders.
+              # GetFunctionConfiguration on "*" would let a compromised page
+              # enumerate every function's environment variables in the account.
+              - Effect: Allow
+                Action: [lambda:GetFunctionConfiguration]
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:cutRelease*'
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:releaseAutomationMergeback*'
+
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-api'
+      Runtime: provided.al2
+      Handler: bootstrap
+      Architectures: [x86_64]
+      MemorySize: 256
+      Timeout: 15
+      Role: !GetAtt ApiRole.Arn
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref ArtifactKey}
+      Environment:
+        Variables:
+          RELEASEBOT_ACCOUNT: !Ref AWS::AccountId
+          RELEASEBOT_HEALTH_BASE: !Ref HealthBase
+          RELEASEBOT_STAGES: !Ref Stages
+
+  # Declared, not left to Lambda: a group Lambda creates for itself never
+  # expires and belongs to no stack, so it outlives the decommission.
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-api'
+      RetentionInDays: !Ref LogRetentionDays
+
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${AWS::StackName}-api'
+      ProtocolType: HTTP
+
+  Authorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref HttpApi
+      AuthorizerType: JWT
+      IdentitySource: ['$request.header.Authorization']
+      Name: cognito
+      JwtConfiguration:
+        Audience: [!Ref UserPoolClient]
+        Issuer: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'
+
+  Integration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ApiFunction.Arn
+      # 1.0 so the handler can reuse the same request/response shapes as every
+      # other function here. A v2 payload would need its own adapter for no gain.
+      PayloadFormatVersion: '1.0'
+
+  Route:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'GET /api/state'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref Authorizer
+      Target: !Sub 'integrations/${Integration}'
+
+  Stage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: $default
+      AutoDeploy: true
+
+  InvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ApiFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*/api/state'
+
+  # ── Where the page lives ────────────────────────────────────────────────────
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-site-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+
+  # The bucket stays private. CloudFront reaches it through an Origin Access
+  # Control, so the only route to the object is the distribution.
+  OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${AWS::StackName}-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: cloudfront.amazonaws.com}
+            Action: s3:GetObject
+            Resource: !Sub '${SiteBucket.Arn}/*'
+            # Without this condition ANY CloudFront distribution in ANY account
+            # could read the bucket.
+            Condition:
+              StringEquals:
+                'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub '${AWS::StackName} dashboard'
+        DefaultRootObject: index.html
+        Origins:
+          - Id: site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt OriginAccessControl.Id
+            S3OriginConfig: {OriginAccessIdentity: ''}
+          - Id: api
+            DomainName: !Sub '${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+            CustomOriginConfig: {OriginProtocolPolicy: https-only, OriginSSLProtocols: [TLSv1.2]}
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          # CachingOptimized
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        CacheBehaviors:
+          - PathPattern: '/api/*'
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS]
+            # CachingDisabled -- live state must never be cached.
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            # AllViewerExceptHostHeader: forwards Authorization (which the JWT
+            # authorizer needs) while letting the API see its own host.
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+        ViewerCertificate: {CloudFrontDefaultCertificate: true}
+
+Outputs:
+  DashboardURL:
+    Value: !Sub 'https://${Distribution.DomainName}/'
+  SiteBucketName:
+    Value: !Ref SiteBucket
+  LoginDomain:
+    Value: !Sub 'https://releasebot-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com'
+  ClientId:
+    Value: !Ref UserPoolClient

@@ -1,0 +1,525 @@
+<title>ReleaseBot Pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+<style>
+  :root{
+    --ground:#EDF1F3; --surface:#FFFFFF; --surface-2:#F5F8F9;
+    --ink:#15212B; --ink-2:#2C3C48; --muted:#5D6F7C; --rule:#D3DCE1;
+    --signal:#0B6E78; --signal-soft:#DCEDEE;
+    --blocking:#A4382A; --blocking-soft:#F2DEDA;
+    --warn:#9C6410; --warn-soft:#F4E8D6;
+    --clear:#2C7355; --clear-soft:#DCEDE4;
+    --display:'Archivo',system-ui,sans-serif;
+    --body:'Source Serif 4',Georgia,serif;
+    --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,monospace;
+    --maxw:1080px;
+  }
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
+    --ground:#0B1218; --surface:#111C24; --surface-2:#16242D;
+    --ink:#E2EAEF; --ink-2:#C3D1DA; --muted:#8597A4; --rule:#24353F;
+    --signal:#45B0BA; --signal-soft:#123038;
+    --blocking:#DB7764; --blocking-soft:#3A1F1A;
+    --warn:#DBA85A; --warn-soft:#352717;
+    --clear:#63B892; --clear-soft:#15301F;
+  }}
+  :root[data-theme="dark"]{
+    --ground:#0B1218; --surface:#111C24; --surface-2:#16242D;
+    --ink:#E2EAEF; --ink-2:#C3D1DA; --muted:#8597A4; --rule:#24353F;
+    --signal:#45B0BA; --signal-soft:#123038;
+    --blocking:#DB7764; --blocking-soft:#3A1F1A;
+    --warn:#DBA85A; --warn-soft:#352717;
+    --clear:#63B892; --clear-soft:#15301F;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--ground); color:var(--ink); font-family:var(--body); font-size:16px; line-height:1.6; -webkit-font-smoothing:antialiased}
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 24px 72px}
+  h1,h2,h3,.lbl{font-family:var(--display)}
+  h1{font-size:clamp(28px,4.2vw,42px); font-weight:700; letter-spacing:-.02em; margin:0; text-wrap:balance}
+  h2{font-size:20px; font-weight:600; letter-spacing:-.01em; margin:0}
+  .lbl{font-size:11px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--muted)}
+  .mono{font-family:var(--mono); font-variant-numeric:tabular-nums}
+  a{color:var(--signal)}
+  a:focus-visible,button:focus-visible{outline:2px solid var(--signal); outline-offset:2px}
+
+  header{border-bottom:1px solid var(--rule); background:var(--surface)}
+  .mast{max-width:var(--maxw); margin:0 auto; padding:28px 24px 24px; display:flex; flex-wrap:wrap; gap:18px 32px; align-items:flex-end; justify-content:space-between}
+  .mast p{margin:8px 0 0; color:var(--muted); max-width:58ch; font-size:15px}
+  .who{font-family:var(--mono); font-size:12px; color:var(--muted); border:1px solid var(--rule); background:var(--surface-2); padding:7px 11px; border-radius:3px; white-space:nowrap}
+
+  section{margin-top:40px}
+  .sechead{display:flex; align-items:baseline; justify-content:space-between; gap:16px; margin-bottom:14px; flex-wrap:wrap}
+  .sechead p{margin:0; color:var(--muted); font-size:14.5px; max-width:62ch}
+
+  /* pipeline */
+  .pipe{display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:14px}
+  .stage{background:var(--surface); border:1px solid var(--rule); border-radius:4px; padding:18px 18px 16px; display:flex; flex-direction:column; gap:9px; position:relative}
+  .stage.gate{border-color:var(--warn); box-shadow:0 0 0 1px var(--warn)}
+  .stage h3{font-family:var(--display); font-size:15px; font-weight:600; margin:0}
+  .stage .sub{font-size:14px; color:var(--ink-2); margin:0; line-height:1.5}
+  .stage ul{margin:4px 0 0; padding-left:0; list-style:none; display:flex; flex-direction:column; gap:4px}
+  .stage li{font-family:var(--mono); font-size:11.5px; color:var(--muted); display:flex; gap:7px; align-items:baseline}
+  .tick{color:var(--clear); font-weight:600}
+  .pend{color:var(--warn); font-weight:600}
+  .pill{font-family:var(--display); font-size:10.5px; font-weight:600; letter-spacing:.09em; text-transform:uppercase; padding:3px 8px; border-radius:2px; align-self:flex-start}
+  .pill.ok{background:var(--clear-soft); color:var(--clear)}
+  .pill.wait{background:var(--warn-soft); color:var(--warn)}
+
+  .gatebox{margin-top:16px; background:var(--warn-soft); border:1px solid var(--warn); border-radius:4px; padding:18px 20px; display:flex; gap:18px; flex-wrap:wrap; align-items:center; justify-content:space-between}
+  .gatebox p{margin:0; color:var(--ink-2); font-size:15px; max-width:62ch}
+  .gatebox strong{font-family:var(--display); color:var(--warn); display:block; font-size:14px; margin-bottom:4px}
+
+  /* tables */
+  .tablewrap{overflow-x:auto; border:1px solid var(--rule); border-radius:4px; background:var(--surface)}
+  table{width:100%; border-collapse:collapse; font-size:14.5px}
+  th{font-family:var(--display); font-size:11px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); text-align:left; padding:12px 16px; border-bottom:1px solid var(--rule); white-space:nowrap}
+  td{padding:12px 16px; border-bottom:1px solid var(--rule); vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td.m{font-family:var(--mono); font-size:12.5px; font-variant-numeric:tabular-nums; white-space:nowrap}
+  .dim{color:var(--muted)}
+
+  .ep{display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:12px}
+  .epcard{background:var(--surface); border:1px solid var(--rule); border-radius:4px; padding:15px 17px; display:flex; flex-direction:column; gap:8px}
+  .epcard a{font-family:var(--mono); font-size:12px; word-break:break-all; text-decoration:none}
+  .epcard a:hover{text-decoration:underline}
+  .epcard .resp{font-family:var(--mono); font-size:11.5px; color:var(--muted); background:var(--surface-2); border:1px solid var(--rule); border-radius:3px; padding:8px 10px; overflow-x:auto; white-space:pre}
+
+  .notes{background:var(--surface); border:1px solid var(--rule); border-radius:4px; padding:24px 26px; display:grid; grid-template-columns:repeat(auto-fit,minmax(255px,1fr)); gap:24px 32px}
+  .notes h3{font-family:var(--display); font-size:14.5px; font-weight:600; margin:0 0 6px}
+  .notes p{margin:0; font-size:14.5px; color:var(--ink-2); line-height:1.6}
+  .notes .k{color:var(--signal)}
+
+  /* approval routes */
+  .routes{display:grid; grid-template-columns:repeat(auto-fit,minmax(332px,1fr)); gap:14px; align-items:start}
+  .route{background:var(--surface); border:1px solid var(--rule); border-radius:4px; padding:19px 20px; display:flex; flex-direction:column; gap:11px}
+  .route.primary{border-left:3px solid var(--clear)}
+  .route.alt{border-left:3px solid var(--warn)}
+  .route h3{font-family:var(--display); font-size:15px; font-weight:600; margin:0}
+  .route p{margin:0; font-size:14.5px; color:var(--ink-2)}
+  .route ul{margin:1px 0 0; padding-left:0; list-style:none; display:flex; flex-direction:column; gap:6px}
+  .route li{font-size:13.5px; color:var(--muted); display:flex; gap:9px; align-items:baseline; line-height:1.5}
+  .pill.part{background:var(--warn-soft); color:var(--warn)}
+
+  .slackmsg{background:var(--surface-2); border:1px solid var(--rule); border-radius:4px; padding:14px 16px; display:flex; flex-direction:column; gap:9px}
+  .slackmsg .from{font-family:var(--display); font-size:12.5px; font-weight:600; color:var(--ink)}
+  .slackmsg .from span{font-family:var(--mono); font-weight:400; font-size:10.5px; color:var(--muted); border:1px solid var(--rule); border-radius:2px; padding:1px 5px; margin-left:6px; vertical-align:1px}
+  .slackmsg .body{font-size:13.5px; color:var(--ink-2); line-height:1.55; margin:0}
+  .slackmsg .btns{display:flex; gap:8px; flex-wrap:wrap; margin-top:3px}
+  .fakebtn{font-family:var(--display); font-size:12px; font-weight:600; padding:7px 13px; border-radius:3px; border:1px solid var(--rule); background:var(--surface); color:var(--ink-2)}
+  .fakebtn.go{background:var(--clear); border-color:var(--clear); color:#F7FBF9}
+
+  .trade{margin-top:14px; border:1px solid var(--rule); border-left:3px solid var(--blocking); background:var(--blocking-soft); border-radius:4px; padding:17px 20px}
+  .trade strong{font-family:var(--display); color:var(--blocking); display:block; font-size:13.5px; margin-bottom:5px}
+  .trade p{margin:0 0 9px; font-size:14.5px; color:var(--ink-2); max-width:72ch}
+  .trade p:last-child{margin-bottom:0}
+  .audit{font-family:var(--mono); font-size:11.5px; color:var(--muted); background:var(--surface); border:1px solid var(--rule); border-radius:3px; padding:9px 11px; margin-top:11px; overflow-x:auto; white-space:pre; line-height:1.65}
+
+
+  /* walkthrough */
+  .flow{background:var(--surface); border:1px solid var(--rule); border-radius:4px; padding:22px 24px}
+  .track{display:flex; overflow-x:auto; padding-bottom:6px}
+  .stepb{flex:1 0 104px; text-align:center; position:relative; padding:0 4px; cursor:pointer;
+         background:none; border:none; font:inherit; color:inherit}
+  .stepb .dot{width:16px; height:16px; border-radius:50%; margin:0 auto 9px;
+              border:2px solid var(--rule); background:var(--surface); transition:.25s}
+  .stepb .bar{position:absolute; top:7px; left:50%; width:100%; height:2px; background:var(--rule)}
+  .stepb:last-child .bar{display:none}
+  .stepb .nm{font-family:var(--display); font-size:11px; font-weight:600; color:var(--muted);
+             line-height:1.3; transition:.25s; position:relative}
+  .stepb.done .dot{border-color:var(--clear); background:var(--clear)}
+  .stepb.done .bar{background:var(--clear)}
+  .stepb.now .dot{border-color:var(--signal); background:var(--signal);
+                  box-shadow:0 0 0 5px color-mix(in srgb, var(--signal) 22%, transparent)}
+  .stepb.now .nm{color:var(--ink)}
+  .stepb.gatestep .dot{border-color:var(--warn)}
+  .stepb.gatestep.done .dot{background:var(--warn)}
+  .fdetail{margin-top:20px; border-top:1px solid var(--rule); padding-top:18px;
+           display:grid; grid-template-columns:1fr auto; gap:18px 24px; align-items:start}
+  .fdetail h3{font-family:var(--display); font-size:17px; margin:0 0 6px}
+  .fdetail p{margin:0; color:var(--ink-2); font-size:15px; max-width:64ch}
+  .fpre{font-family:var(--mono); font-size:11.5px; color:var(--muted);
+        background:var(--surface-2); border:1px solid var(--rule); border-radius:3px;
+        padding:10px 12px; margin-top:12px; overflow-x:auto; white-space:pre; line-height:1.7}
+  .fctl{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+  .fbtn{font-family:var(--display); font-size:13px; font-weight:600; padding:8px 15px;
+        border-radius:3px; border:1px solid var(--signal); background:var(--signal);
+        color:var(--surface); cursor:pointer}
+  .fbtn.ghost{background:transparent; color:var(--ink-2); border-color:var(--rule)}
+  .fnum{font-family:var(--mono); font-size:12px; color:var(--muted); min-width:40px}
+  @media (prefers-reduced-motion:reduce){.stepb .dot,.stepb .nm{transition:none}}
+
+  footer{margin-top:40px; padding-top:18px; border-top:1px solid var(--rule); font-family:var(--mono); font-size:12px; color:var(--muted); display:flex; flex-wrap:wrap; gap:8px 22px; justify-content:space-between}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important; animation:none!important}}
+</style>
+
+<header>
+  <div class="mast">
+    <div>
+      <span class="lbl">Delivery pipeline · ReleaseBot migration</span>
+      <h1>ReleaseBot Pipeline</h1>
+      <p>One artifact, built once, proven on a test environment, and promoted to production only when a person approves it — in GitHub, or from Slack. Everything below is read from a live AWS account and a real pipeline run.</p>
+    </div>
+    <div class="who" id="who">viewing as guest</div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section style="margin-top:32px">
+    <div class="sechead">
+      <h2>The run, right now</h2>
+      <p>Commit <span class="mono">c19ca74</span> is <strong>held at the gate</strong>. It passed every
+         check on test; production is still serving the previous release and will keep serving it
+         until a person approves.</p>
+    </div>
+
+    <div class="pipe">
+      <div class="stage">
+        <span class="pill ok">passed</span>
+        <h3>1 · Build, once</h3>
+        <p class="sub">Tests, static analysis and the behaviour suite run against a local stand-in — free, and with no cloud account involved. The artifact is packaged and fingerprinted.</p>
+        <ul>
+          <li><span class="tick">✓</span> unit tests</li>
+          <li><span class="tick">✓</span> vet</li>
+          <li><span class="tick">✓</span> 13 behaviour checks</li>
+          <li><span class="tick">✓</span> packaged + fingerprinted</li>
+        </ul>
+      </div>
+
+      <div class="stage">
+        <span class="pill ok">passed</span>
+        <h3>2 · Prove it on test</h3>
+        <p class="sub">The pipeline proves its identity to AWS rather than holding a stored key. It deploys, then reads the deployed fingerprint back and fails if it differs from what was built.</p>
+        <ul>
+          <li><span class="tick">✓</span> identity proven, no stored key</li>
+          <li><span class="tick">✓</span> deployed to test</li>
+          <li><span class="tick">✓</span> fingerprint matches the build</li>
+          <li><span class="tick">✓</span> 8 behaviour checks on the live endpoint</li>
+        </ul>
+      </div>
+
+      <div class="stage gate">
+        <span class="pill wait">waiting for a person</span>
+        <h3>3 · Promote to production</h3>
+        <p class="sub">No build step. Approving deploys <em>the exact bytes</em> stage 2 validated, then runs the same checks against production.</p>
+        <ul>
+          <li><span class="tick">✓</span> Slack notified on pause</li>
+          <li><span class="pend">◦</span> held — no approval yet</li>
+          <li><span class="pend">◦</span> production untouched</li>
+          <li><span class="pend">◦</span> same artifact, on approval</li>
+          <li><span class="pend">◦</span> 8 behaviour checks, on approval</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="gatebox">
+      <p>
+        <strong>The gap below is the gate doing its job</strong>
+        Test is on <span class="mono">c19ca74</span>; production is still on
+        <span class="mono">62c1607</span>. That difference is not drift — it is a release being held.
+        The gate is an environment protection rule, not a condition inside the workflow: the job
+        cannot start until a named reviewer approves, and editing the workflow would not change that.
+        On approval, production receives the artifact test already validated — no rebuild — and the
+        two fingerprints become identical again.
+      </p>
+      <a class="mono" href="https://github.com/vamsiatluri/releasebot-demo/actions/runs/37842575311" target="_blank" rel="noopener">view the run →</a>
+    </div>
+  </section>
+
+  <section>
+    <div class="sechead">
+      <h2>How a change reaches production</h2>
+      <p>The real path end to end, with the artifacts from run 37840483976. Press play, or
+         click any step.</p>
+    </div>
+    <div class="flow">
+      <div class="track" id="track"></div>
+      <div class="fdetail">
+        <div>
+          <h3 id="f-title"></h3>
+          <p id="f-body"></p>
+          <div class="fpre" id="f-pre"></div>
+        </div>
+        <div class="fctl">
+          <span class="fnum" id="f-num"></span>
+          <button class="fbtn ghost" id="f-prev">Back</button>
+          <button class="fbtn" id="f-play">Play</button>
+          <button class="fbtn ghost" id="f-next">Next</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sechead">
+      <h2>How the pause gets lifted</h2>
+      <p>The release stops on its own and waits for a person. Two routes can lift it — one is the
+         control, the other is a convenience built on top of it. They are not equivalent, and the
+         difference is stated rather than smoothed over.</p>
+    </div>
+
+    <div class="routes">
+      <div class="route primary">
+        <span class="pill ok">primary · proven</span>
+        <h3>Approve in GitHub</h3>
+        <p>An environment protection rule names the reviewers. GitHub holds the job, emails them,
+           and refuses to start production until one of them clicks approve.</p>
+        <ul>
+          <li><span class="tick">✓</span> Enforced by GitHub, not by a condition inside the workflow — editing the workflow does not remove it</li>
+          <li><span class="tick">✓</span> The approver is a named GitHub identity, and the decision is in GitHub's audit log</li>
+          <li><span class="tick">✓</span> Observed holding a real production deploy in this account</li>
+        </ul>
+      </div>
+
+      <div class="route alt">
+        <span class="pill ok">optional · proven</span>
+        <h3>Approve from Slack</h3>
+        <p>The pipeline posts the pause into a channel with a button on it. Clicking the button
+           calls the same GitHub approval the reviewer would have clicked.</p>
+        <div class="slackmsg">
+          <div class="from">ReleaseBot<span>APP</span></div>
+          <p class="body">⏳ <strong>Waiting for your approval</strong><br>
+             Commit <span class="mono">c19ca74</span> built and passed every check on <em>test</em>.
+             Production has <em>not</em> been touched.</p>
+          <div class="btns">
+            <span class="fakebtn go">Approve and deploy</span>
+            <span class="fakebtn">Review in GitHub</span>
+          </div>
+        </div>
+        <ul>
+          <li><span class="tick">✓</span> Slack delivers the click; the signature is verified and a replayed click is refused</li>
+          <li><span class="tick">✓</span> The clicking account is checked against a named list — an empty list approves nobody</li>
+          <li><span class="tick">✓</span> The right release is targeted — the run id travels in the button, not "whatever is pending"</li>
+          <li><span class="tick">✓</span> Proven on run #12: GitHub recorded the approval and production promoted</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="trade">
+      <strong>Why one of these is weaker, said plainly</strong>
+      <p>GitHub's rule says <em>only these named people, signed in to GitHub</em>. A chat button says
+         <em>anyone who can click in this channel</em>, and GitHub records the approval as the service
+         account that holds the token rather than the person who decided. The identity check moves out
+         of GitHub and into our own code — so that code verifies the request really came from Slack,
+         checks the clicker against an explicit list, and writes down every attempt.</p>
+      <p>It is deployed as a <em>separate</em> stack for exactly this reason: deleting that one stack
+         removes the chat route and leaves GitHub's gate untouched. If a reviewer objects to the
+         button, that is the whole remediation.</p>
+      <div class="audit" id="audit"></div>
+      <p style="margin-top:11px"><strong style="font-family:var(--display); color:var(--blocking); font-size:13.5px; display:block; margin-bottom:5px">The last step, and why it is a good find</strong>
+         Those are real lines from the endpoint's own audit log, from a real click. Every link we built
+         holds — delivery, signature, approver, run id — and GitHub refuses at the end. A
+         <em>fine-grained</em> access token is not permitted to review pending deployments at all; the
+         endpoint accepts only classic tokens carrying <span class="mono">repo</span>.</p>
+      <p>The message says <em>"Resource not accessible by personal access token"</em>, which reads as a
+         permission you forgot to tick — and the token already held <span class="mono">Actions: read and
+         write</span>, the permission anyone would reach for. Nothing was under-scoped. It was the wrong
+         kind of credential, and adding permissions to it could never have worked. With a classic token
+         the same button promoted run #12, and GitHub's own record reads
+         <span class="mono">vamsiatluri approved — "Approved from Slack by vamsi.d.atluri"</span>: the
+         approval is attributed to the token's owner, with the human who actually clicked carried in the
+         comment. Traceable, and still weaker than GitHub's own gate.</p>
+      <p><strong style="font-family:var(--display); color:var(--blocking); font-size:13.5px; display:block; margin-bottom:5px">And a second one, found by a job failing</strong>
+         The pipeline's notification step died with <span class="mono">unknown status: awaiting</span>.
+         The branch that builds the message carrying the button had never been committed — it lived only
+         on the author's laptop, along with the approval function itself and its template. Every earlier
+         message in the channel had been posted <em>by hand</em>; the pipeline had never once sent one.
+         Nothing failed loudly, because the function was deployed and working — it simply was not in the
+         repository that is meant to BE the evidence. <strong>Deployed is not committed, and running
+         infrastructure is not a record of itself.</strong> Fixed, and the message above is the first the
+         pipeline has sent on its own.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sechead">
+      <h2>What is deployed</h2>
+      <p>Four small programs, each fronted by a named pointer called <span class="mono">live</span>. A rollback is moving that pointer back — one command, no rebuild.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Program</th><th>Environment</th><th>live points at</th><th>Commit</th><th>Fingerprint</th></tr></thead>
+        <tbody id="fns"></tbody>
+      </table>
+    </div>
+    <p class="dim" style="font-size:14px; margin-top:10px">
+      Test carries the candidate, production still carries the last approved release. The pointer named
+      <span class="mono">live</span> is what separates them — and moving it back is also how a rollback
+      works. When the gate is released, each pair reports an identical fingerprint, which is what makes
+      "we shipped what we tested" a measurement rather than a claim.
+    </p>
+  </section>
+
+  <section>
+    <div class="sechead">
+      <h2>Live endpoints</h2>
+      <p>Public, no sign-in. Open them and you are reading the deployed system directly.</p>
+    </div>
+    <div class="ep" id="eps"></div>
+  </section>
+
+  <section>
+    <div class="sechead"><h2>Why it is built this way</h2></div>
+    <div class="notes">
+      <div>
+        <h3>Build once, deploy many</h3>
+        <p>Production has no build step. It deploys the artifact test already exercised, and both environments <span class="k">read the deployed fingerprint back</span> and fail if it differs. "We shipped what we tested" is a check, not a hope.</p>
+      </div>
+      <div>
+        <h3>No stored cloud key</h3>
+        <p>The pipeline proves its identity each run and receives a pass that expires within the hour. There is <span class="k">no permanent credential</span> to leak and none to rotate.</p>
+      </div>
+      <div>
+        <h3>A rollback that takes seconds</h3>
+        <p>Each deploy freezes a numbered version; the pointer named <span class="k">live</span> selects one. Rolling back moves the pointer. Nothing is rebuilt and no pipeline runs.</p>
+      </div>
+      <div>
+        <h3>The checks run against the real thing</h3>
+        <p>The same suite runs on a laptop, after every deploy, and on a schedule. Four of the bugs found in this project <span class="k">only failed against a real deployment</span> — none would have surfaced locally.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Sandbox AWS account · us-east-1 · read live <span id="stamp"></span></span>
+    <span><a href="https://github.com/vamsiatluri/releasebot-demo" target="_blank" rel="noopener">github.com/vamsiatluri/releasebot-demo</a></span>
+  </footer>
+</div>
+
+<script>
+const FNS = [
+  {name:"cutReleaseTest",                 env:"test",       v:"13", commit:"c19ca74", sha:"ESPWmLSPp8/Jq5ICNCw4RyVIoVD2oP6y/gqj1E6uvCI="},
+  {name:"cutRelease",                     env:"production", v:"9", commit:"62c1607", sha:"jzz3Ku7c4jI2BlgQq2pJV+Ho0Tey2w7vxj///sPMYYo="},
+  {name:"releaseAutomationMergebackTest", env:"test",       v:"13", commit:"c19ca74", sha:"A4ZlW8sOBV5I170KsrsSxvh4LnbWk3cHanxvnGgnEwM="},
+  {name:"releaseAutomationMergeback",     env:"production", v:"8", commit:"62c1607", sha:"5TBRQSsRKxP7chdK61ulbzzyOqNBVSUATYVvgWPyFqs="}
+];
+const EPS = [
+  {label:"test · health", url:"https://0aohv0kx5k.execute-api.us-east-1.amazonaws.com/test/beta/health",
+   resp:'{"ok":true,"env":"test","stage":"test",\n "commit":"c19ca74",\n "built":"2026-10-08T20:52:03Z"}\n\nThe candidate, already validated here.'},
+  {label:"production · health", url:"https://0aohv0kx5k.execute-api.us-east-1.amazonaws.com/prod/beta/health",
+   resp:'{"ok":true,"env":"prod","stage":"prod",\n "commit":"62c1607",\n "built":"2026-10-08T20:35:08Z"}\n\nThe last approved release --\napproved from Slack.\nOne API, two stages — the stage picks\nwhich copy answers.'}
+];
+
+document.getElementById("fns").innerHTML = FNS.map(f => `
+  <tr>
+    <td class="m">${f.name}</td>
+    <td>${f.env === "test"
+      ? '<span class="pill ok">test</span>'
+      : '<span class="pill wait">production</span>'}</td>
+    <td class="m">v${f.v}</td>
+    <td class="m">${f.commit}</td>
+    <td class="m dim">${f.sha.slice(0, 16)}…</td>
+  </tr>`).join("");
+
+document.getElementById("eps").innerHTML = EPS.map(e => `
+  <div class="epcard">
+    <span class="lbl">${e.label}</span>
+    <a href="${e.url}" target="_blank" rel="noopener">${e.url.replace("https://", "")}</a>
+    <div class="resp">${e.resp}</div>
+  </div>`).join("");
+
+const AUDIT = [
+  '{"event":"click",          "run_id":"37826933854", "slack_user":"U0C7…KNW", "detail":"name=vamsi.d.atluri"}',
+  '{"event":"approve.failed", "run_id":"37826933854", "detail":"GitHub returned 403: Resource not',
+  '                                                    accessible by personal access token"}',
+  '',
+  '{"event":"click",          "run_id":"37840483976", "slack_user":"U0C7…KNW", "detail":"name=vamsi.d.atluri"}',
+  '{"event":"approved",       "run_id":"37840483976", "detail":"production"}   ← run #12'
+];
+document.getElementById("audit").textContent = AUDIT.join("\n");
+
+
+// ── The end-to-end walkthrough ───────────────────────────────────────────────
+// Real values from run 37840483976. Nothing here is illustrative.
+const STEPS = [
+  {n:"Commit", t:"A commit lands on main",
+   b:"Nothing is deployed yet. The pipeline starts itself — nobody runs anything by hand.",
+   p:"commit 62c1607\nbranch main"},
+  {n:"Build once", t:"Build, and build only once",
+   b:"Unit tests, static analysis and 13 behaviour checks run against a local stand-in — free, with no cloud account involved. The artifact is packaged and fingerprinted here, and never rebuilt again.",
+   p:"✓ unit tests\n✓ vet\n✓ 13 behaviour checks\n✓ packaged → jzz3Ku7c4jI2BlgQq2pJV+Ho0Tey2w7vxj///sPMYYo="},
+  {n:"Deploy test", t:"Deploy to test",
+   b:"The pipeline proves its identity to AWS and receives credentials that expire within the hour. There is no stored access key anywhere. It publishes an immutable version and moves the test alias to it.",
+   p:"assume role via OIDC — no stored key\npublish version 12\nalias cutReleaseTest:live → 12"},
+  {n:"Verify test", t:"Prove it on test",
+   b:"Eight checks run against the live endpoint, and the deployed fingerprint is read back and compared with what the build published. A mismatch fails the run.",
+   p:"✓ 8 behaviour checks on the live endpoint\n✓ deployed fingerprint == built fingerprint"},
+  {n:"Gate", t:"The run stops and waits", gate:true,
+   b:"GitHub holds the job. This is an environment protection rule, not a condition inside the workflow — editing the workflow would not remove it. Slack is notified at the same moment.",
+   p:"status: waiting\nslack: notified (awaiting)\nproduction: untouched"},
+  {n:"Approve", t:"A person approves", gate:true,
+   b:"Two routes. In GitHub a named reviewer clicks approve. Or the Slack button: the click is signature-checked, the clicker is checked against a named list, and every attempt is written down. The chat route is the weaker control, and it is labelled as such.",
+   p:'AUDIT {"event":"click",   "run_id":"37840483976","slack_user":"U0C7…KNW"}\nAUDIT {"event":"approved","run_id":"37840483976","detail":"production"}'},
+  {n:"Promote", t:"Promote — with no build step",
+   b:"Production deploys the exact bytes test already validated. There is no compile here. The fingerprint is read back again and compared.",
+   p:"publish version 9\nalias cutRelease:live → 9\nfingerprint jzz3Ku7c4jI2BlgQq2pJV+Ho0Tey2w7vxj///sPMYYo=\n            ↑ identical to the one test validated"},
+  {n:"Verify prod", t:"Prove it on production",
+   b:"The same eight checks run again, now against production. Both environments report the same fingerprint, which is what makes “we shipped what we tested” a measurement rather than a claim.",
+   p:"✓ 8 behaviour checks on production\n✓ prod fingerprint == test fingerprint"},
+  {n:"Rollback", t:"And if it is wrong",
+   b:"The previous version is still published. Rolling back moves the alias back to it — one command, seconds, nothing rebuilds and no pipeline runs.",
+   p:"aws lambda update-alias --name live --function-version 8\n\n⚠ a version freezes CONFIGURATION too, so rotating a\n  secret invalidates every older version as a target"},
+];
+
+let fcur = 0, ftimer = null;
+
+function paintFlow(){
+  document.getElementById("track").innerHTML = STEPS.map(function(s,i){
+    return '<button class="stepb ' + (i<fcur?"done ":"") + (i===fcur?"now ":"") +
+      (s.gate?"gatestep":"") + '" data-i="' + i + '">' +
+      '<span class="bar"></span><span class="dot"></span>' +
+      '<span class="nm"></span></button>';
+  }).join("");
+  // Names are set as text, never interpolated into markup.
+  document.querySelectorAll("#track .stepb").forEach(function(el,i){
+    el.querySelector(".nm").textContent = STEPS[i].n;
+    el.setAttribute("aria-label", STEPS[i].t);
+    el.onclick = function(){ stopFlow(); fcur = i; paintFlow(); };
+  });
+  const s = STEPS[fcur];
+  document.getElementById("f-title").textContent = s.t;
+  document.getElementById("f-body").textContent  = s.b;
+  document.getElementById("f-pre").textContent   = s.p;
+  document.getElementById("f-num").textContent   = (fcur+1) + " / " + STEPS.length;
+}
+
+function stopFlow(){
+  if (ftimer) { clearInterval(ftimer); ftimer = null; }
+  document.getElementById("f-play").textContent = "Play";
+}
+
+function playFlow(){
+  if (ftimer) { stopFlow(); return; }
+  if (fcur >= STEPS.length - 1) fcur = 0;
+  document.getElementById("f-play").textContent = "Pause";
+  paintFlow();
+  // Slow enough to talk over.
+  ftimer = setInterval(function(){
+    if (fcur >= STEPS.length - 1) { stopFlow(); return; }
+    fcur++; paintFlow();
+  }, 4200);
+}
+
+document.getElementById("f-play").onclick = playFlow;
+document.getElementById("f-next").onclick = function(){ stopFlow(); if (fcur < STEPS.length-1) fcur++; paintFlow(); };
+document.getElementById("f-prev").onclick = function(){ stopFlow(); if (fcur > 0) fcur--; paintFlow(); };
+paintFlow();
+
+document.getElementById("stamp").textContent =
+  new Date("2026-10-08T21:05:00Z").toISOString().replace("T", " ").slice(0, 16) + "Z";
+
+// Identity, where the viewer's platform can tell us. This PERSONALISES the page;
+// it does not protect anything — every figure here is in the page source, and
+// client-side gating is not security. A viewer outside the owner's organisation,
+// including anyone on a shared link, simply stays "guest".
+(async () => {
+  try {
+    const user = await window.claude?.use?.("user");
+    if (!user) return;
+    const me = await user.me();
+    const el = document.getElementById("who");
+    const name = (me && me.name) || "";
+    el.textContent = name ? `signed in · ${name}` : "signed in";
+  } catch { /* stay as guest */ }
+})();
+</script>
