@@ -23,7 +23,15 @@ import (
 type Config struct {
 	Env           string // RARC_ENV: "prod" | "test"
 	ConfigURL     string // RARC_CONFIG_URL: repo/branch policy document
-	GitHubAPI     string // override for the local harness
+	// ⚠️ RELEASEBOT_-prefixed, not GITHUB_API_URL.
+	//
+	// GitHub Actions reserves the GITHUB_* prefix and sets GITHUB_API_URL to
+	// https://api.github.com in every runner. A config key by that name is
+	// silently overridden in CI, so `${GITHUB_API_URL:-http://localhost:9099}`
+	// never falls back -- and the local test harness quietly pointed at the real
+	// GitHub and tried to create branches there. It passed locally and failed
+	// only in CI, which is the worst shape a bug can have.
+	GitHubAPI     string // RELEASEBOT_GITHUB_API_URL
 	SlackAPI      string
 	JiraAPI       string
 	DefaultBranch string
@@ -55,7 +63,7 @@ func Load(ctx context.Context, resolve SecretResolver) (Config, error) {
 	c := Config{
 		Env:            envOr("RARC_ENV", "test"),
 		ConfigURL:      os.Getenv("RARC_CONFIG_URL"),
-		GitHubAPI:      envOr("GITHUB_API_URL", "https://api.github.com"),
+		GitHubAPI:      envOr("RELEASEBOT_GITHUB_API_URL", "https://api.github.com"),
 		SlackAPI:       envOr("SLACK_API_URL", "https://slack.com/api"),
 		JiraAPI:        envOr("JIRA_API_URL", ""),
 		DefaultBranch:  envOr("DEFAULT_BRANCH", "main"),

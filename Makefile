@@ -59,7 +59,7 @@ mocks:
 	go run ./cmd/mockapis
 
 local:
-	GITHUB_API_URL=http://localhost:9099 \
+	RELEASEBOT_GITHUB_API_URL=http://localhost:9099 \
 	SLACK_API_URL=http://localhost:9099 \
 	GITHUB_TOKEN=local-dev-github-token \
 	SLACK_TOKEN=local-dev-slack-token \

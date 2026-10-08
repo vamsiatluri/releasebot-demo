@@ -10,8 +10,11 @@
 # Usage:  source scripts/harness.sh && harness_up    (harness_down on EXIT)
 set -euo pipefail
 
-export GITHUB_API_URL="${GITHUB_API_URL:-http://localhost:9099}"
-export SLACK_API_URL="${SLACK_API_URL:-http://localhost:9099}"
+# Forced, not defaulted. The harness exists to point at the mock, so a caller's
+# value is never what we want -- and GITHUB_API_URL in particular is set by
+# GitHub Actions itself, which is how this silently aimed at the real GitHub.
+export RELEASEBOT_GITHUB_API_URL="http://localhost:9099"
+export SLACK_API_URL="http://localhost:9099"
 export GITHUB_TOKEN="${GITHUB_TOKEN:-local-dev-github-token}"
 export SLACK_TOKEN="${SLACK_TOKEN:-local-dev-slack-token}"
 export SLACK_SIGNING_SECRET="${SLACK_SIGNING_SECRET:-local-dev-signing-secret}"
