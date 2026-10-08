@@ -2,3 +2,8 @@
 # directory named build at any depth.
 /build/
 *.zip
+
+# Assessment output. These hold a real account's inventory -- resource names,
+# role names, environment variable NAMES, API ids. No secret VALUES, but on a
+# public repo it is still somebody's infrastructure laid out in full.
+build/
