@@ -131,6 +131,23 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:cutRelease*'
                   - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:releaseAutomationMergeback*'
+              # The pipeline publishes its own verification results so a
+              # behaviour failure is visible to someone who does not read CI.
+              #
+              # ⚠️ PutMetricData takes no resource ARN -- Resource must be "*".
+              # The namespace condition is what keeps it least-privilege: this
+              # role can write ReleaseBot metrics and nothing else. Without the
+              # condition, "Resource: *" here means the deploy role can forge
+              # datapoints into ANY namespace in the account, including the ones
+              # other teams alarm on.
+              - Sid: PublishOwnVerificationMetricsOnly
+                Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: ReleaseBot
+
               - Sid: PublishArtifacts
                 Effect: Allow
                 Action: [s3:PutObject, s3:GetObject]
