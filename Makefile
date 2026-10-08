@@ -11,7 +11,10 @@
 GOOS        ?= linux
 GOARCH      ?= amd64
 BUILD_DIR   ?= build
-LDFLAGS     := -s -w -X main.version=$(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+BUILT       ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+PKG         := github.com/vamsiatluri/releasebot-migration/internal/handler
+LDFLAGS     := -s -w -X $(PKG).BuildCommit=$(COMMIT) -X $(PKG).BuildTime=$(BUILT)
 
 FUNCTIONS := cutrelease mergeback
 

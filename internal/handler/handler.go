@@ -27,6 +27,13 @@ import (
 	"github.com/vamsiatluri/releasebot-migration/internal/slackverify"
 )
 
+// Stamped at build time via -ldflags. The defaults make an unstamped or local
+// build obvious rather than letting it silently report someone else's commit.
+var (
+	BuildCommit = "unstamped"
+	BuildTime   = "unknown"
+)
+
 type Action string
 
 const (
@@ -70,10 +77,15 @@ func (h *Handler) Handle(ctx context.Context, req events.APIGatewayProxyRequest)
 
 	// Health check: the deploy workflow and the parallel-run validation both
 	// need a way to prove a function is alive that does not cut a release.
+	//
+	// It reports the BUILD it is running, not merely that it is up. "Is it
+	// alive" and "is it running the code I just shipped" are different
+	// questions, and a deploy pipeline needs the second one -- a green deploy
+	// against a stale artifact looks identical to a good one otherwise.
 	if strings.HasSuffix(req.Path, "/health") || req.QueryStringParameters["health"] == "1" {
 		return events.JSON(200, fmt.Sprintf(
-			`{"ok":true,"env":%q,"action":%q,"stage":%q}`,
-			h.Cfg.Env, h.Action, req.RequestContext.Stage))
+			`{"ok":true,"env":%q,"action":%q,"stage":%q,"commit":%q,"built":%q}`,
+			h.Cfg.Env, h.Action, req.RequestContext.Stage, BuildCommit, BuildTime))
 	}
 
 	switch {
