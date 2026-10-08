@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ReleaseBot - the Slack approval endpoint.
+
+  ⚠️ This stack WEAKENS the production gate, deliberately. GitHub's
+  required-reviewer rule says "only these named people, signed in to GitHub, may
+  approve". Once this exists, a Slack button can approve instead, and GitHub
+  records every such approval as the single token-holder this function carries --
+  so the audit trail stops saying WHO decided.
+
+  Kept as a SEPARATE stack for exactly that reason: deleting this one stack
+  removes the alternate path and leaves GitHub's own gate intact. That is a much
+  easier thing to reason about, and to reverse, than an option buried inside the
+  main API stack.
+
+Parameters:
+  ArtifactBucket:   {Type: String}
+  ArtifactKey:      {Type: String, Default: 'releasebot/slackapprove.zip'}
+  RestApiId:        {Type: String, Description: 'Existing ReleaseBot API id'}
+  BetaResourceId:   {Type: String, Description: 'Resource id of /beta on that API'}
+  StageName:        {Type: String, Default: prod}
+  GitHubOwner:      {Type: String, Default: vamsiatluri}
+  GitHubRepo:       {Type: String, Default: releasebot-demo}
+  GitHubEnvironmentId: {Type: String}
+  SlackApprovers:
+    Type: String
+    Default: ''
+    Description: >
+      Comma-separated Slack user ids permitted to approve. ⚠️ EMPTY MEANS NOBODY
+      -- the handler fails closed. Read as "allow everyone", a blank value would
+      turn a misconfiguration into an open door on a public endpoint that can
+      deploy to production.
+  SlackSigningSecret: {Type: String, NoEcho: true}
+  GitHubApprovalToken:
+    Type: String
+    NoEcho: true
+    Description: >
+      Fine-grained token scoped to this repository with Actions read/write. It is
+      the identity every Slack-originated approval is recorded as.
+  LogRetentionDays: {Type: Number, Default: 7}
+
+Resources:
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/slackApprove
+      RetentionInDays: !Ref LogRetentionDays
+
+  Function:
+    Type: AWS::Lambda::Function
+    DependsOn: LogGroup
+    Properties:
+      FunctionName: slackApprove
+      Runtime: provided.al2
+      Handler: bootstrap
+      Architectures: [x86_64]
+      Role: !GetAtt ExecutionRole.Arn
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref ArtifactKey}
+      MemorySize: 256
+      Timeout: 15
+      # A button that approves production deploys has no reason to run at scale.
+      # Capping it bounds what a flood of forged clicks can cost, even though
+      # each one is rejected.
+      ReservedConcurrentExecutions: 2
+      Environment:
+        Variables:
+          SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
+          GITHUB_APPROVAL_TOKEN: !Ref GitHubApprovalToken
+          GITHUB_OWNER: !Ref GitHubOwner
+          GITHUB_REPO: !Ref GitHubRepo
+          GITHUB_ENVIRONMENT_ID: !Ref GitHubEnvironmentId
+          SLACK_APPROVERS: !Ref SlackApprovers
+
+  SlackResource:
+    Type: AWS::ApiGateway::Resource
+    Properties: {RestApiId: !Ref RestApiId, ParentId: !Ref BetaResourceId, PathPart: slack}
+
+  InteractResource:
+    Type: AWS::ApiGateway::Resource
+    Properties: {RestApiId: !Ref RestApiId, ParentId: !Ref SlackResource, PathPart: interact}
+
+  InteractMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApiId
+      ResourceId: !Ref InteractResource
+      HttpMethod: POST
+      # No authorizer: Slack signs the request, and that signature is the
+      # authentication. An API Gateway authorizer cannot verify it, because the
+      # check is an HMAC over the exact body.
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Function.Arn}/invocations'
+
+  Deployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: InteractMethod
+    Properties: {RestApiId: !Ref RestApiId}
+
+  InvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt Function.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/*/*/*'
+
+Outputs:
+  RequestUrl:
+    Description: Paste this into the Slack app's Interactivity Request URL.
+    Value: !Sub 'https://${RestApiId}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/beta/slack/interact'
+  FunctionName: {Value: !Ref Function}
