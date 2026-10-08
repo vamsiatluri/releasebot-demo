@@ -103,10 +103,13 @@ Resources:
                 token.actions.githubusercontent.com:sub: !If
                   - HasImmutableIds
                   - - !Sub 'repo:${GitHubOrg}@${GitHubOwnerId}/${GitHubRepo}@${GitHubRepoId}:ref:refs/heads/main'
+                    - !Sub 'repo:${GitHubOrg}@${GitHubOwnerId}/${GitHubRepo}@${GitHubRepoId}:environment:test'
                     - !Sub 'repo:${GitHubOrg}@${GitHubOwnerId}/${GitHubRepo}@${GitHubRepoId}:environment:production'
                     - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/main'
+                    - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:test'
                     - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
                   - - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/main'
+                    - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:test'
                     - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
       Policies:
         - PolicyName: releasebot-deploy

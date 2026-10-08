@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 export AWS_PROFILE=releasebot-sandbox AWS_PAGER=""
 SRC=us-east-1
 TGT=us-west-2
-ACCT=826653639065
+ACCT=$(aws sts get-caller-identity --query Account --output text)
 OUT=build/loop
 mkdir -p "$OUT"
 

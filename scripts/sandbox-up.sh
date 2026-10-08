@@ -11,8 +11,14 @@ export AWS_PROFILE="${AWS_PROFILE:-releasebot-sandbox}" AWS_REGION="${AWS_REGION
 
 ACCT=$(aws sts get-caller-identity --query Account --output text)
 BUCKET="releasebot-artifacts-$ACCT"
-SIG="${SLACK_SIGNING_SECRET:-sandbox-signing-secret-7a41c9}"
-JIRA="${JIRA_WEBHOOK_SECRET:-sandbox-jira-secret}"
+# ⛔ No secret defaults. A literal here is a literal in the published repository,
+# and a signing secret in source next to a public URL lets anyone sign a valid
+# request. The SOW is explicit about this: "do not expose secret values in
+# source, logs, tickets, or documentation."
+: "${SLACK_SIGNING_SECRET:?set SLACK_SIGNING_SECRET before running}"
+: "${JIRA_WEBHOOK_SECRET:?set JIRA_WEBHOOK_SECRET before running}"
+SIG="$SLACK_SIGNING_SECRET"
+JIRA="$JIRA_WEBHOOK_SECRET"
 step() { printf '\n\033[1m── %s\033[0m\n' "$1"; }
 
 step "1/8  build and package"

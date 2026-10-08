@@ -2,8 +2,14 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 export AWS_PROFILE=releasebot-sandbox AWS_PAGER=""
-SRC=us-east-1; TGT=us-west-2; ACCT=826653639065; OUT=build/loop
+SRC=us-east-1; TGT=us-west-2; ACCT=$(aws sts get-caller-identity --query Account --output text); OUT=build/loop
 BUCKET="releasebot-artifacts-$ACCT-$TGT"
+# ⛔ No secret defaults. A literal here is a literal in the published repository,
+# and a signing secret in source next to a public URL lets anyone sign a valid
+# request. The SOW is explicit about this: "do not expose secret values in
+# source, logs, tickets, or documentation."
+: "${SLACK_SIGNING_SECRET:?set SLACK_SIGNING_SECRET before running}"
+: "${JIRA_WEBHOOK_SECRET:?set JIRA_WEBHOOK_SECRET before running}"
 
 record() {
   python3 - "$OUT/iterations.json" "$1" "$2" "$3" "$4" "$5" "$6" <<'PY'
@@ -43,8 +49,8 @@ if [ "$ITER" = 1 ]; then
     ArtifactBucket="$BUCKET" \
     GithubTokenParam=target-placeholder-token \
     SlackTokenParam=target-placeholder-token \
-    SlackSigningSecretParam=sandbox-signing-secret-7a41c9 \
-    JiraWebhookSecretParam=sandbox-jira-secret 2>&1) || true
+    SlackSigningSecretParam="$SLACK_SIGNING_SECRET" \
+    JiraWebhookSecretParam="$JIRA_WEBHOOK_SECRET" 2>&1) || true
   echo "$OUT1" | sed 's/^/  /'
   REASON=$(aws cloudformation describe-stack-events --stack-name releasebot-generated --region $TGT \
     --query 'StackEvents[?ResourceStatus==`CREATE_FAILED`].ResourceStatusReason' --output text 2>/dev/null | head -1)
@@ -79,8 +85,8 @@ PY
     ArtifactBucket="$BUCKET" \
     GithubTokenParam=target-placeholder-token \
     SlackTokenParam=target-placeholder-token \
-    SlackSigningSecretParam=sandbox-signing-secret-7a41c9 \
-    JiraWebhookSecretParam=sandbox-jira-secret | sed 's/^/  /'
+    SlackSigningSecretParam="$SLACK_SIGNING_SECRET" \
+    JiraWebhookSecretParam="$JIRA_WEBHOOK_SECRET" | sed 's/^/  /'
   read -r T B <<< "$(measure 2)"
   record 2 "Reference existing roles; match log retention" "deployed" \
     "Compute deployed. The API is still absent -- the generator deliberately refuses to emit it, because its integration URIs embed the source account and its invoke URL embeds the API id." "$T" "$B"
