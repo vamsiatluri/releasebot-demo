@@ -191,6 +191,28 @@ func (s Summary) WriteMetrics(w io.Writer) error {
 		{MetricName: "ContractCriticalFailed", Value: float64(s.CriticalFails), Unit: "Count", Dimensions: dims},
 		{MetricName: "ContractDuration", Value: float64(s.DurationMS), Unit: "Milliseconds", Dimensions: dims},
 	}
+
+	// ⚠️ Emit a DIMENSIONLESS copy as well, for the estate-wide alarms.
+	//
+	// A CloudWatch alarm that names no dimensions does not aggregate across
+	// dimensions -- it matches only the metric published with no dimensions at
+	// all. So an alarm written without dimensions against a metric that is only
+	// ever published WITH them never sees a datapoint: it cannot fire when
+	// something breaks, and with TreatMissingData=breaching it cannot clear
+	// either. It just sits red, and everyone learns to ignore it.
+	//
+	// Caught on 2026-10-07 when four green suite runs left the staleness alarm
+	// stuck in ALARM. The per-environment series drives the dashboard; this
+	// dimensionless rollup drives the alarms. Both, deliberately, rather than
+	// one pretending to be the other.
+	for _, m := range []metric{
+		{MetricName: "ContractSuccessPercent", Value: pct, Unit: "Percent"},
+		{MetricName: "ContractChecksFailed", Value: float64(s.Failed), Unit: "Count"},
+		{MetricName: "ContractCriticalFailed", Value: float64(s.CriticalFails), Unit: "Count"},
+	} {
+		m.Dimensions = []metricDimension{}
+		ms = append(ms, m)
+	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(ms)
