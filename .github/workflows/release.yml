@@ -23,6 +23,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      promote:
+        description: 'Promote the tested artifact to production'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -148,9 +153,25 @@ jobs:
   prod:
     needs: [build, test]
     runs-on: ubuntu-latest
-    # ⏸ THE GATE. This environment carries a required reviewer, so the run stops
-    # here until a person approves it. The same artifact is already proven on the
-    # test stage; approving promotes those exact bytes.
+    # ⏸ THE GATE.
+    #
+    # Two mechanisms, and which one is load-bearing depends on the plan:
+    #
+    #  • `environment: production` is the one you want. A required-reviewer rule
+    #    on that environment stops the run until a person clicks approve, and
+    #    nothing in the pipeline can route around it. ⚠️ GitHub only offers that
+    #    rule on PUBLIC repositories below the Team tier -- on a private repo with
+    #    Pro, creating it is refused with a billing error. The declaration is kept
+    #    regardless: it costs nothing and becomes the gate the moment the repo is
+    #    public or the plan changes.
+    #
+    #  • The `if` below is what actually gates it today. Pushing to main builds
+    #    and proves the artifact on test, and stops. Production happens only when
+    #    a human deliberately dispatches the run with promote=true. That is still
+    #    a person deciding, it is still recorded against their account, and it
+    #    still cannot happen by accident -- it is just expressed as a dispatch
+    #    rather than a click.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.promote }}
     environment: production
     steps:
       - uses: actions/checkout@v4
