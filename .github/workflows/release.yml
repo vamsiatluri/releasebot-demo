@@ -1,0 +1,209 @@
+name: release
+
+# The pipeline this project is actually about.
+#
+#   build once  ──►  deploy to TEST  ──►  behaviour suite
+#                                              │
+#                                     ⏸ waits for a human
+#                                              │
+#                    deploy to PROD  ──►  behaviour suite
+#
+# Two properties are the whole point:
+#
+#  1. ONE artifact. The prod job does not rebuild -- it deploys the exact bytes
+#     the test job validated, and both jobs verify the deployed code fingerprint
+#     against the digest the build job published. "We shipped what we tested" is
+#     a check, not a hope.
+#
+#  2. The gate is real. The prod job names a GitHub Environment with a required
+#     reviewer, so the run pauses there until a person approves. Nothing in the
+#     pipeline can route around it.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write      # required for OIDC. Without it the assume-role fails with
+                       # a confusing "Not authorized to perform
+                       # sts:AssumeRoleWithWebIdentity".
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      sha:   ${{ steps.meta.outputs.sha }}
+      cut:   ${{ steps.digest.outputs.cut }}
+      merge: ${{ steps.digest.outputs.merge }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.22', cache: true}
+
+      - name: Unit tests
+        run: go test ./... -count=1
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Contract suite against the local harness
+        # Free, no AWS, no credentials. Catches behaviour regressions before
+        # anything is deployed anywhere.
+        env:
+          SLACK_SIGNING_SECRET: local-dev-signing-secret
+          JIRA_WEBHOOK_SECRET: local-dev-jira-secret
+        run: |
+          set -euo pipefail
+          source scripts/harness.sh && harness_up
+          go run ./cmd/contracttest -base http://localhost:8080 -env local \
+            -repo msnbc/news-app-shadow -mutating -summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Package
+        run: make package
+
+      - id: meta
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - id: digest
+        # The artifact's identity. Compared against the deployed CodeSha256 after
+        # every deploy, in every environment.
+        run: |
+          echo "cut=$(openssl dgst -sha256 -binary build/cutrelease.zip | base64)"  >> "$GITHUB_OUTPUT"
+          echo "merge=$(openssl dgst -sha256 -binary build/mergeback.zip | base64)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: releasebot-${{ steps.meta.outputs.sha }}
+          path: build/*.zip
+          retention-days: 30
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: test
+    outputs:
+      api: ${{ steps.url.outputs.base }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.22', cache: true}
+      - uses: actions/download-artifact@v4
+        with: {name: releasebot-${{ needs.build.outputs.sha }}, path: build}
+
+      # No AWS key anywhere. The only stored value is a role ARN, which is not a
+      # credential -- it is useless without the trust policy naming this repo.
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: releasebot-test-${{ github.run_id }}
+
+      - name: Confirm which account we are in
+        run: aws sts get-caller-identity --query Account --output text
+
+      - name: Upload the artifact
+        run: |
+          set -euo pipefail
+          B="releasebot-artifacts-$(aws sts get-caller-identity --query Account --output text)"
+          aws s3 cp build/cutrelease.zip "s3://$B/releasebot/${{ needs.build.outputs.sha }}/cutrelease.zip"
+          aws s3 cp build/mergeback.zip  "s3://$B/releasebot/${{ needs.build.outputs.sha }}/mergeback.zip"
+
+      - name: Deploy to the test functions
+        run: bash scripts/ci-deploy.sh test "${{ needs.build.outputs.sha }}"
+
+      - name: Verify the deployed bytes are the bytes we built
+        run: |
+          set -euo pipefail
+          bash scripts/ci-verify-digest.sh cutReleaseTest                   '${{ needs.build.outputs.cut }}'
+          bash scripts/ci-verify-digest.sh releaseAutomationMergebackTest   '${{ needs.build.outputs.merge }}'
+
+      - id: url
+        run: |
+          set -euo pipefail
+          U=$(aws cloudformation describe-stacks --stack-name releasebot-edge \
+                --query "Stacks[0].Outputs[?OutputKey=='TestInvokeUrl'].OutputValue" --output text)
+          [ -n "$U" ] && [ "$U" != "None" ] || { echo "::error::could not resolve the API URL"; exit 1; }
+          echo "base=${U%/test}" >> "$GITHUB_OUTPUT"
+
+      - name: Behaviour suite against the deployed test stage
+        env:
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+          JIRA_WEBHOOK_SECRET: ${{ secrets.JIRA_WEBHOOK_SECRET }}
+        run: |
+          go run ./cmd/contracttest -base "${{ steps.url.outputs.base }}/test" -env test \
+            -metrics metrics-test.json -summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the result to CloudWatch
+        if: always()
+        run: |
+          [ -f metrics-test.json ] || exit 0
+          aws cloudwatch put-metric-data --namespace ReleaseBot --metric-data file://metrics-test.json
+
+  prod:
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    # ⏸ THE GATE. This environment carries a required reviewer, so the run stops
+    # here until a person approves it. The same artifact is already proven on the
+    # test stage; approving promotes those exact bytes.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.22', cache: true}
+      - uses: actions/download-artifact@v4
+        with: {name: releasebot-${{ needs.build.outputs.sha }}, path: build}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: releasebot-prod-${{ github.run_id }}
+
+      - name: Deploy the SAME artifact to the production functions
+        # Note what is absent: no build step. The bytes came from the build job's
+        # artifact, which the test job has already exercised end to end.
+        run: bash scripts/ci-deploy.sh prod "${{ needs.build.outputs.sha }}"
+
+      - name: Verify the deployed bytes are the bytes we tested
+        run: |
+          set -euo pipefail
+          bash scripts/ci-verify-digest.sh cutRelease                  '${{ needs.build.outputs.cut }}'
+          bash scripts/ci-verify-digest.sh releaseAutomationMergeback  '${{ needs.build.outputs.merge }}'
+
+      - name: Behaviour suite against the deployed production stage
+        env:
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+          JIRA_WEBHOOK_SECRET: ${{ secrets.JIRA_WEBHOOK_SECRET }}
+        run: |
+          set -euo pipefail
+          U=$(aws cloudformation describe-stacks --stack-name releasebot-edge \
+                --query "Stacks[0].Outputs[?OutputKey=='ProdInvokeUrl'].OutputValue" --output text)
+          go run ./cmd/contracttest -base "$U" -env prod \
+            -metrics metrics-prod.json -summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the result to CloudWatch
+        if: always()
+        run: |
+          [ -f metrics-prod.json ] || exit 0
+          aws cloudwatch put-metric-data --namespace ReleaseBot --metric-data file://metrics-prod.json
+
+      - name: Record what shipped
+        run: |
+          {
+            echo "### Promoted to production"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| commit | \`${{ needs.build.outputs.sha }}\` |"
+            echo "| approved by | @${{ github.actor }} |"
+            echo "| cutRelease fingerprint | \`${{ needs.build.outputs.cut }}\` |"
+            echo "| mergeback fingerprint | \`${{ needs.build.outputs.merge }}\` |"
+            echo ""
+            echo "No rebuild happened between test and production. These are the same bytes."
+          } >> "$GITHUB_STEP_SUMMARY"
