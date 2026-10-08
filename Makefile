@@ -81,3 +81,15 @@ contract-local:
 	@bash -c 'source scripts/harness.sh && harness_up && \
 	  go run ./cmd/contracttest -base http://localhost:8080 -env local \
 	    -repo msnbc/news-app-shadow -mutating'
+
+# Parse every workflow before pushing. A GitHub expression inside a YAML FLOW
+# mapping -- `with: {name: x-${{ y }}}` -- makes the file unparseable, and
+# GitHub reports only "workflow file issue" with no line number. Catching it
+# here costs a second; catching it in CI costs a push and a guess.
+lint-workflows:
+	@python3 -c "import yaml,glob,sys; \
+	bad=[(f,str(e)[:120]) for f in glob.glob('.github/workflows/*.yml') \
+	     for e in [None] if (lambda: False)()] ; \
+	ok=True; \
+	[ (yaml.safe_load(open(f)), print('  ok   '+f)) for f in sorted(glob.glob('.github/workflows/*.yml')) ]" \
+	|| { echo 'workflow YAML is invalid'; exit 1; }

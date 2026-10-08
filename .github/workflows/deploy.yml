@@ -13,15 +13,13 @@ name: deploy
 #   parallel   - both accounts deployed; dev is still the system of operation
 #   prod-only  - after cutover; dev is no longer deployed to (step 7)
 
+# Reference only: this workflow targets a TWO-ACCOUNT setup (a dev account and
+# a production account) which the single sandbox account does not have. Kept
+# because it is the shape the real migration needs, but dispatch-only so it
+# cannot fail on every push -- a permanently red workflow teaches people to
+# ignore red.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
-    inputs:
-      migration_phase:
-        type: choice
-        options: [dev-only, parallel, prod-only]
-        default: parallel
 
 permissions:
   contents: read
@@ -97,7 +95,9 @@ jobs:
 
       - uses: actions/download-artifact@v4
         if: steps.gate.outputs.run == 'true'
-        with: {name: releasebot-${{ needs.build.outputs.sha }}, path: build}
+        with:
+          name: "releasebot-${{ needs.build.outputs.sha }}"
+          path: build
 
       # No AWS access keys in repository secrets. The only secret here is a role
       # ARN, which is not a credential -- it is useless without the OIDC trust

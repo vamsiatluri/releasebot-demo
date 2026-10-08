@@ -99,7 +99,9 @@ jobs:
       - uses: actions/setup-go@v5
         with: {go-version: '1.22', cache: true}
       - uses: actions/download-artifact@v4
-        with: {name: releasebot-${{ needs.build.outputs.sha }}, path: build}
+        with:
+          name: "releasebot-${{ needs.build.outputs.sha }}"
+          path: build
 
       # No AWS key anywhere. The only stored value is a role ARN, which is not a
       # credential -- it is useless without the trust policy naming this repo.
@@ -178,7 +180,9 @@ jobs:
       - uses: actions/setup-go@v5
         with: {go-version: '1.22', cache: true}
       - uses: actions/download-artifact@v4
-        with: {name: releasebot-${{ needs.build.outputs.sha }}, path: build}
+        with:
+          name: "releasebot-${{ needs.build.outputs.sha }}"
+          path: build
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:

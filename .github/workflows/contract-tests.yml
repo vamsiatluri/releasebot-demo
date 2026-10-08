@@ -14,19 +14,13 @@ name: contract-tests
 # and compares. "The production account behaves like the dev account" stops
 # being an opinion at that point.
 
+# Reference only: this workflow targets a TWO-ACCOUNT setup (a dev account and
+# a production account) which the single sandbox account does not have. Kept
+# because it is the shape the real migration needs, but dispatch-only so it
+# cannot fail on every push -- a permanently red workflow teaches people to
+# ignore red.
 on:
-  pull_request:
   workflow_dispatch:
-    inputs:
-      target:
-        type: choice
-        options: [local, dev-test-stage, prod-test-stage, both-accounts]
-        default: local
-  schedule:
-    - cron: '*/30 * * * *'
-  workflow_run:
-    workflows: [deploy]
-    types: [completed]
 
 permissions:
   contents: read
@@ -133,7 +127,9 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         if: always()
-        with: {name: contract-${{ matrix.account }}, path: 'contract-*.xml'}
+        with:
+          name: "contract-${{ matrix.account }}"
+          path: 'contract-*.xml'
 
   # During the parallel run this is the evidence that matters: not "prod passed"
   # but "prod and dev produced the same result".
