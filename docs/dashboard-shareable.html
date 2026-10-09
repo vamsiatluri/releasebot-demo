@@ -116,37 +116,52 @@
 
 
   /* walkthrough */
-  .flow{background:var(--surface); border:1px solid var(--rule); border-radius:4px; padding:22px 24px}
-  .track{display:flex; overflow-x:auto; padding-bottom:6px}
-  .stepb{flex:1 0 104px; text-align:center; position:relative; padding:0 4px; cursor:pointer;
-         background:none; border:none; font:inherit; color:inherit}
-  .stepb .dot{width:16px; height:16px; border-radius:50%; margin:0 auto 9px;
-              border:2px solid var(--rule); background:var(--surface); transition:.25s}
-  .stepb .bar{position:absolute; top:7px; left:50%; width:100%; height:2px; background:var(--rule)}
-  .stepb:last-child .bar{display:none}
-  .stepb .nm{font-family:var(--display); font-size:11px; font-weight:600; color:var(--muted);
-             line-height:1.3; transition:.25s; position:relative}
-  .stepb.done .dot{border-color:var(--clear); background:var(--clear)}
-  .stepb.done .bar{background:var(--clear)}
-  .stepb.now .dot{border-color:var(--signal); background:var(--signal);
-                  box-shadow:0 0 0 5px color-mix(in srgb, var(--signal) 22%, transparent)}
-  .stepb.now .nm{color:var(--ink)}
-  .stepb.gatestep .dot{border-color:var(--warn)}
-  .stepb.gatestep.done .dot{background:var(--warn)}
-  .fdetail{margin-top:20px; border-top:1px solid var(--rule); padding-top:18px;
-           display:grid; grid-template-columns:1fr auto; gap:18px 24px; align-items:start}
-  .fdetail h3{font-family:var(--display); font-size:17px; margin:0 0 6px}
-  .fdetail p{margin:0; color:var(--ink-2); font-size:15px; max-width:64ch}
-  .fpre{font-family:var(--mono); font-size:11.5px; color:var(--muted);
-        background:var(--surface-2); border:1px solid var(--rule); border-radius:3px;
-        padding:10px 12px; margin-top:12px; overflow-x:auto; white-space:pre; line-height:1.7}
-  .fctl{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+  .flowwrap{display:grid; grid-template-columns:minmax(200px,236px) 1fr;
+            background:var(--surface); border:1px solid var(--rule); border-radius:4px; overflow:hidden}
+  .steps{list-style:none; margin:0; padding:14px 0; border-right:1px solid var(--rule);
+         background:var(--surface-2)}
+  .steps li{position:relative}
+  /* The connector runs from this dot's centre to the next one's, behind them. */
+  .steps li::before{content:''; position:absolute; left:22px; top:50%; height:100%;
+                    width:2px; background:var(--rule); z-index:0}
+  .steps li:last-child::before{display:none}
+  .steps li.done::before{background:var(--clear)}
+  .sbtn{display:flex; align-items:center; gap:12px; width:100%; text-align:left;
+        background:none; border:0; font:inherit; color:var(--muted); cursor:pointer;
+        padding:9px 16px; position:relative}
+  /* display:block matters — width and height do nothing on an inline span, which
+     is what turned these dots into slivers the first time. */
+  .sdot{flex:0 0 auto; display:block; width:14px; height:14px; border-radius:50%;
+        border:2px solid var(--rule); background:var(--surface-2); position:relative; z-index:1}
+  .slab{font-family:var(--display); font-size:13px; font-weight:600; line-height:1.3}
+  .steps li.done .sdot{border-color:var(--clear); background:var(--clear)}
+  .steps li.gatestep .sdot{border-color:var(--warn)}
+  .steps li.gatestep.done .sdot{background:var(--warn)}
+  .steps li.now .sbtn{color:var(--ink); background:var(--surface)}
+  .steps li.now .sdot{border-color:var(--signal); background:var(--signal);
+                      box-shadow:0 0 0 4px color-mix(in srgb,var(--signal) 20%,transparent)}
+  .sbtn:focus-visible{outline:2px solid var(--signal); outline-offset:-2px}
+
+  .fdetail{padding:22px 26px 20px; display:flex; flex-direction:column; gap:11px}
+  .fstep{font-family:var(--display); font-size:11px; font-weight:600; letter-spacing:.12em;
+         text-transform:uppercase; color:var(--muted)}
+  .fdetail h3{font-family:var(--display); font-size:19px; font-weight:600; margin:0}
+  .fdetail p{margin:0; color:var(--ink-2); font-size:15px; max-width:60ch}
+  .fpre{font-family:var(--mono); font-size:11.5px; color:var(--muted); background:var(--surface-2);
+        border:1px solid var(--rule); border-radius:3px; padding:12px 14px;
+        overflow-x:auto; white-space:pre; line-height:1.8; margin-top:auto}
+  .fctl{display:flex; gap:8px; align-items:center; border-top:1px solid var(--rule);
+        padding-top:14px; margin-top:6px}
   .fbtn{font-family:var(--display); font-size:13px; font-weight:600; padding:8px 15px;
         border-radius:3px; border:1px solid var(--signal); background:var(--signal);
         color:var(--surface); cursor:pointer}
   .fbtn.ghost{background:transparent; color:var(--ink-2); border-color:var(--rule)}
-  .fnum{font-family:var(--mono); font-size:12px; color:var(--muted); min-width:40px}
-  @media (prefers-reduced-motion:reduce){.stepb .dot,.stepb .nm{transition:none}}
+  .fbtn:focus-visible{outline:2px solid var(--signal); outline-offset:2px}
+  @media (max-width:720px){
+    .flowwrap{grid-template-columns:1fr}
+    .steps{border-right:none; border-bottom:1px solid var(--rule)}
+  }
+  @media (prefers-reduced-motion:reduce){.sdot{transition:none}}
 
   footer{margin-top:40px; padding-top:18px; border-top:1px solid var(--rule); font-family:var(--mono); font-size:12px; color:var(--muted); display:flex; flex-wrap:wrap; gap:8px 22px; justify-content:space-between}
   @media (prefers-reduced-motion:reduce){*{transition:none!important; animation:none!important}}
@@ -229,21 +244,18 @@
   <section>
     <div class="sechead">
       <h2>How a change reaches production</h2>
-      <p>The real path end to end, with the artifacts from run 37840483976. Press play, or
-         click any step.</p>
+      <p>The real path, end to end, with the artifacts from run 37840483976.</p>
     </div>
-    <div class="flow">
-      <div class="track" id="track"></div>
+    <div class="flowwrap">
+      <ul class="steps" id="steps"></ul>
       <div class="fdetail">
-        <div>
-          <h3 id="f-title"></h3>
-          <p id="f-body"></p>
-          <div class="fpre" id="f-pre"></div>
-        </div>
+        <span class="fstep" id="f-num"></span>
+        <h3 id="f-title"></h3>
+        <p id="f-body"></p>
+        <div class="fpre" id="f-pre"></div>
         <div class="fctl">
-          <span class="fnum" id="f-num"></span>
-          <button class="fbtn ghost" id="f-prev">Back</button>
           <button class="fbtn" id="f-play">Play</button>
+          <button class="fbtn ghost" id="f-prev">Back</button>
           <button class="fbtn ghost" id="f-next">Next</button>
         </div>
       </div>
@@ -438,22 +450,22 @@ const STEPS = [
   {n:"Build once", t:"Build, and build only once",
    b:"Unit tests, static analysis and 13 behaviour checks run against a local stand-in — free, with no cloud account involved. The artifact is packaged and fingerprinted here, and never rebuilt again.",
    p:"✓ unit tests\n✓ vet\n✓ 13 behaviour checks\n✓ packaged → jzz3Ku7c4jI2BlgQq2pJV+Ho0Tey2w7vxj///sPMYYo="},
-  {n:"Deploy test", t:"Deploy to test",
+  {n:"Deploy to test", t:"Deploy to test",
    b:"The pipeline proves its identity to AWS and receives credentials that expire within the hour. There is no stored access key anywhere. It publishes an immutable version and moves the test alias to it.",
    p:"assume role via OIDC — no stored key\npublish version 12\nalias cutReleaseTest:live → 12"},
-  {n:"Verify test", t:"Prove it on test",
+  {n:"Verify on test", t:"Prove it on test",
    b:"Eight checks run against the live endpoint, and the deployed fingerprint is read back and compared with what the build published. A mismatch fails the run.",
    p:"✓ 8 behaviour checks on the live endpoint\n✓ deployed fingerprint == built fingerprint"},
-  {n:"Gate", t:"The run stops and waits", gate:true,
+  {n:"The gate", t:"The run stops and waits", gate:true,
    b:"GitHub holds the job. This is an environment protection rule, not a condition inside the workflow — editing the workflow would not remove it. Slack is notified at the same moment.",
    p:"status: waiting\nslack: notified (awaiting)\nproduction: untouched"},
-  {n:"Approve", t:"A person approves", gate:true,
+  {n:"Approval", t:"A person approves", gate:true,
    b:"Two routes. In GitHub a named reviewer clicks approve. Or the Slack button: the click is signature-checked, the clicker is checked against a named list, and every attempt is written down. The chat route is the weaker control, and it is labelled as such.",
    p:'AUDIT {"event":"click",   "run_id":"37840483976","slack_user":"U0C7…KNW"}\nAUDIT {"event":"approved","run_id":"37840483976","detail":"production"}'},
   {n:"Promote", t:"Promote — with no build step",
    b:"Production deploys the exact bytes test already validated. There is no compile here. The fingerprint is read back again and compared.",
    p:"publish version 9\nalias cutRelease:live → 9\nfingerprint jzz3Ku7c4jI2BlgQq2pJV+Ho0Tey2w7vxj///sPMYYo=\n            ↑ identical to the one test validated"},
-  {n:"Verify prod", t:"Prove it on production",
+  {n:"Verify on prod", t:"Prove it on production",
    b:"The same eight checks run again, now against production. Both environments report the same fingerprint, which is what makes “we shipped what we tested” a measurement rather than a claim.",
    p:"✓ 8 behaviour checks on production\n✓ prod fingerprint == test fingerprint"},
   {n:"Rollback", t:"And if it is wrong",
@@ -463,24 +475,39 @@ const STEPS = [
 
 let fcur = 0, ftimer = null;
 
+// Built once; only classes and the detail text change afterwards, so a click
+// never loses focus to a re-created button.
+(function buildSteps(){
+  const ul = document.getElementById("steps");
+  STEPS.forEach(function(s, i){
+    const li = document.createElement("li");
+    if (s.gate) li.className = "gatestep";
+    const b = document.createElement("button");
+    b.className = "sbtn";
+    b.type = "button";
+    const dot = document.createElement("span");
+    dot.className = "sdot";
+    const lab = document.createElement("span");
+    lab.className = "slab";
+    lab.textContent = s.n;
+    b.appendChild(dot); b.appendChild(lab);
+    b.onclick = function(){ stopFlow(); fcur = i; paintFlow(); };
+    li.appendChild(b); ul.appendChild(li);
+  });
+})();
+
 function paintFlow(){
-  document.getElementById("track").innerHTML = STEPS.map(function(s,i){
-    return '<button class="stepb ' + (i<fcur?"done ":"") + (i===fcur?"now ":"") +
-      (s.gate?"gatestep":"") + '" data-i="' + i + '">' +
-      '<span class="bar"></span><span class="dot"></span>' +
-      '<span class="nm"></span></button>';
-  }).join("");
-  // Names are set as text, never interpolated into markup.
-  document.querySelectorAll("#track .stepb").forEach(function(el,i){
-    el.querySelector(".nm").textContent = STEPS[i].n;
-    el.setAttribute("aria-label", STEPS[i].t);
-    el.onclick = function(){ stopFlow(); fcur = i; paintFlow(); };
+  const lis = document.querySelectorAll("#steps li");
+  lis.forEach(function(li, i){
+    li.classList.toggle("done", i < fcur);
+    li.classList.toggle("now",  i === fcur);
+    li.querySelector(".sbtn").setAttribute("aria-current", i === fcur ? "step" : "false");
   });
   const s = STEPS[fcur];
+  document.getElementById("f-num").textContent   = "Step " + (fcur+1) + " of " + STEPS.length;
   document.getElementById("f-title").textContent = s.t;
   document.getElementById("f-body").textContent  = s.b;
   document.getElementById("f-pre").textContent   = s.p;
-  document.getElementById("f-num").textContent   = (fcur+1) + " / " + STEPS.length;
 }
 
 function stopFlow(){
