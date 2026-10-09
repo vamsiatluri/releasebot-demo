@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -88,9 +87,11 @@ func (h *Handler) Handle(ctx context.Context, req events.APIGatewayProxyRequest)
 		// degraded config that looks healthy is worse than a loud failure.
 		return events.JSON(200, fmt.Sprintf(
 			`{"ok":true,"env":%q,"action":%q,"stage":%q,"commit":%q,"built":%q,`+
-				`"configSource":%q,"configPath":%q,"defaultBranch":%q}`,
+				`"configSource":%q,"configPath":%q,`+
+				`"defaultOwner":%q,"defaultBranch":%q,"slackChannel":%q,"datadogService":%q}`,
 			h.Cfg.Env, h.Action, req.RequestContext.Stage, BuildCommit, BuildTime,
-			h.Cfg.ConfigSource, h.Cfg.ConfigPath, h.Cfg.DefaultBranch))
+			h.Cfg.ConfigSource, h.Cfg.ConfigPath,
+			h.Cfg.DefaultOwner, h.Cfg.DefaultBranch, h.Cfg.SlackChannel, h.Cfg.DatadogService))
 	}
 
 	switch {
@@ -121,7 +122,7 @@ func (h *Handler) handleSlack(ctx context.Context, log *obs.Logger,
 	if err != nil {
 		return events.Text(400, "could not parse slash command payload")
 	}
-	cmd, err := release.ParseCommand(form.Get("text"), os.Getenv("DEFAULT_OWNER"))
+	cmd, err := release.ParseCommand(form.Get("text"), h.Cfg.DefaultOwner)
 	if err != nil {
 		// 200 with a message: a non-2xx makes Slack show its own generic
 		// failure and the user never sees the actual usage error.
@@ -154,7 +155,7 @@ func (h *Handler) handleSlack(ctx context.Context, log *obs.Logger,
 func (h *Handler) handleJira(ctx context.Context, log *obs.Logger,
 	req events.APIGatewayProxyRequest, body []byte) events.APIGatewayProxyResponse {
 
-	if err := jira.VerifySecret(os.Getenv("JIRA_WEBHOOK_SECRET"), req.Header(jira.HeaderSecret)); err != nil {
+	if err := jira.VerifySecret(h.Cfg.JiraWebhookSecret, req.Header(jira.HeaderSecret)); err != nil {
 		log.With("reason", err.Error()).Warn("rejected Jira webhook")
 		log.Count("releasebot.auth.rejected", 1, "source:jira")
 		return events.Text(401, "unauthorized")
@@ -171,7 +172,7 @@ func (h *Handler) handleJira(ctx context.Context, log *obs.Logger,
 		return events.JSON(200, `{"ignored":"no fixVersion"}`)
 	}
 	cmd := release.Command{
-		Repo:    os.Getenv("DEFAULT_OWNER") + "/" + strings.ToLower(ev.Issue.Fields.Project.Key),
+		Repo:    h.Cfg.DefaultOwner + "/" + strings.ToLower(ev.Issue.Fields.Project.Key),
 		Version: version,
 		Actor:   ev.User.DisplayName,
 	}
@@ -182,7 +183,7 @@ func (h *Handler) handleJira(ctx context.Context, log *obs.Logger,
 		log.With("error", err.Error()).Error("release action failed from jira webhook")
 		return events.JSON(500, `{"ok":false}`)
 	}
-	if ch := os.Getenv("SLACK_CHANNEL"); ch != "" {
+	if ch := h.Cfg.SlackChannel; ch != "" {
 		if err := h.Slack.PostMessage(ctx, ch, text); err != nil {
 			log.With("error", err.Error()).Warn("could not announce to Slack")
 		}

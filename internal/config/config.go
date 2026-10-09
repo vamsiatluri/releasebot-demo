@@ -41,12 +41,19 @@ type Config struct {
 	SlackAPI      string
 	JiraAPI       string
 	DefaultBranch string
+	// Per-environment values that used to be read with os.Getenv() at the point
+	// of use. Scattered reads are why "it comes from Parameter Store" could be
+	// true of the mechanism and false of most of the values.
+	DefaultOwner string
+	SlackChannel string
+	AckOnly      bool
 
 	GitHubToken        string
 	SlackToken         string
 	SlackSigningSecret string
 	JiraUser           string
 	JiraToken          string
+	JiraWebhookSecret  string
 
 	DatadogSite    string
 	DatadogAPIKey  string
@@ -69,6 +76,9 @@ func Load(ctx context.Context, resolve SecretResolver) (Config, error) {
 	c := Config{
 		Env:            envOr("RARC_ENV", "test"),
 		ConfigURL:      os.Getenv("RARC_CONFIG_URL"),
+		DefaultOwner:   os.Getenv("DEFAULT_OWNER"),
+		SlackChannel:   os.Getenv("SLACK_CHANNEL"),
+		AckOnly:        os.Getenv("RELEASEBOT_ACK_ONLY") == "1",
 		GitHubAPI:      envOr("RELEASEBOT_GITHUB_API_URL", "https://api.github.com"),
 		SlackAPI:       envOr("SLACK_API_URL", "https://slack.com/api"),
 		JiraAPI:        envOr("JIRA_API_URL", ""),
@@ -89,6 +99,7 @@ func Load(ctx context.Context, resolve SecretResolver) (Config, error) {
 		{"SLACK_SIGNING_SECRET", &c.SlackSigningSecret, true},
 		{"JIRA_USER", &c.JiraUser, false},
 		{"JIRA_TOKEN", &c.JiraToken, false},
+		{"JIRA_WEBHOOK_SECRET", &c.JiraWebhookSecret, false},
 		{"DD_API_KEY", &c.DatadogAPIKey, false},
 	} {
 		raw := os.Getenv(f.key)
@@ -186,11 +197,16 @@ func (c Config) WithParameters(v map[string]string) Config {
 		}
 	}
 	set(&c.DefaultBranch, "default-branch")
+	set(&c.DefaultOwner, "default-owner")
+	set(&c.SlackChannel, "slack-channel")
 	set(&c.ConfigURL, "config-url")
+	set(&c.GitHubAPI, "github-api-url")
+	set(&c.SlackAPI, "slack-api-url")
+	set(&c.JiraAPI, "jira-api-url")
 	set(&c.DatadogSite, "datadog-site")
-	// default-owner and slack-channel are read straight from the environment by
-	// the handler today rather than carried on Config; they are in the path and
-	// will move here when that is tidied, which is why they are listed in the
-	// IAM grant already.
+	set(&c.DatadogService, "datadog-service")
+	if s, ok := v["ack-only"]; ok && strings.TrimSpace(s) != "" {
+		c.AckOnly = strings.EqualFold(strings.TrimSpace(s), "true")
+	}
 	return c
 }
