@@ -112,6 +112,11 @@
   .fpre{font-family:var(--mono); font-size:11.5px; color:var(--muted); background:var(--surface-2);
         border:1px solid var(--rule); border-radius:3px; padding:12px 14px;
         overflow-x:auto; white-space:pre; line-height:1.8; margin-top:auto}
+  .freq{border-left:3px solid var(--signal); background:var(--signal-soft);
+        border-radius:0 3px 3px 0; padding:11px 14px}
+  .freq .lbl2{font-family:var(--display); font-size:10px; font-weight:600; letter-spacing:.13em;
+              text-transform:uppercase; color:var(--signal); display:block; margin-bottom:3px}
+  .freq p{margin:0; font-size:13.5px; color:var(--ink-2); max-width:62ch}
   .fctl{display:flex; gap:8px; align-items:center; border-top:1px solid var(--rule);
         padding-top:14px; margin-top:6px}
   .fbtn{font-family:var(--display); font-size:13px; font-weight:600; padding:8px 15px;
@@ -124,6 +129,7 @@
     .steps{border-right:none; border-bottom:1px solid var(--rule)}
   }
   @media (prefers-reduced-motion:reduce){.sdot{transition:none}}
+
   [hidden]{display:none!important}
 </style>
 </head>
@@ -186,6 +192,7 @@
         <span class="fstep" id="f-num"></span>
         <h3 id="f-title"></h3>
         <p id="f-body"></p>
+        <div class="freq"><span class="lbl2">What their scope asks for here</span><p id="f-req"></p></div>
         <div class="fpre" id="f-pre"></div>
         <div class="fctl">
           <button class="fbtn" id="f-play">Play</button>
@@ -195,6 +202,7 @@
       </div>
     </div>
   </section>
+
 
 
     <footer>
@@ -329,35 +337,54 @@ function showGate(msg){
 // Real values from run 37840483976. Nothing here is illustrative.
 const STEPS = [
   {n:"Commit", t:"A commit lands on main",
-   b:"Nothing is deployed yet. The pipeline starts itself — nobody runs anything by hand.",
-   p:"commit 62c1607\nbranch main"},
+   r:"Phase 4 — deployments automated and repeatable. Nothing is run from an engineer's laptop, so the process does not depend on who is awake.",
+   b:"Nothing is deployed yet. The pipeline starts itself. The person who wrote the change does not need AWS credentials at all — which is also how you remove the engineer-leaves-the-company problem from a migration.",
+   p:"commit 62c1607\nbranch main\ntriggered by  push\nhuman AWS access required  none"},
+
   {n:"Build once", t:"Build, and build only once",
-   b:"Unit tests, static analysis and 13 behaviour checks run against a local stand-in — free, with no cloud account involved. The artifact is packaged and fingerprinted here and never rebuilt again. The part that makes everything downstream possible: no environment is compiled into it. The binary knows how to be either prod or test; it does not know which it is.",
-   p:"✓ unit tests\n✓ vet\n✓ 13 behaviour checks\n✓ packaged → jzz3Ku7c4jI2BlgQq2pJV+Ho0Tey2w7vxj///sPMYYo=\n\nno account id, no stage, no endpoint, no environment name\nis chosen at build time — the artifact reads which one it\nis when it starts, and from the alias it was invoked through"},
+   r:"Phase 2 — preserve existing application behaviour. If one artifact serves both accounts, “behaviour is unchanged” becomes something you can measure instead of assert.",
+   b:"Unit tests, static analysis and 13 behaviour checks run against a local stand-in — free, with no cloud account involved. The artifact is packaged and fingerprinted here and never rebuilt. No environment is compiled into it: the binary knows how to be either prod or test and does not know which it is.",
+   p:"✓ unit tests\n✓ vet\n✓ 13 behaviour checks (all 13 run here — 5 need a real repo,\n  so only those 5 are skipped later against a live account)\n✓ packaged → jzz3Ku7c4jI2BlgQq2pJV+Ho0Tey2w7vxj///sPMYYo=\n\nno account id, no stage, no endpoint, no environment name\nis chosen at build time"},
+
   {n:"Deploy to test", t:"Deploy to test",
-   b:"The pipeline proves its identity to AWS and receives credentials that expire within the hour. There is no stored access key anywhere. It publishes an immutable version and moves the alias to it. The environment is attached HERE, as configuration on the function — the zip is not touched.",
-   p:"assume role via OIDC — no stored key\npublish version 12\nalias cutReleaseTest:live → 12\n\nconfiguration attached at deploy, never at build:\n  RARC_ENV              = test\n  RELEASEBOT_GITHUB_API_URL, tokens, channel\n\nsame zip, different configuration"},
-  {n:"Verify on test", t:"Prove it on test",
-   b:"Eight checks run against the live endpoint, and the deployed fingerprint is read back and compared with what the build published. A mismatch fails the run.",
-   p:"✓ 8 behaviour checks on the live endpoint\n✓ deployed fingerprint == built fingerprint"},
+   r:"Phase 2 and 4 — infrastructure as code, deployed by CI, with no long-lived AWS keys. Observability is attached in the same step rather than added afterwards, because a log group created later belongs to nobody.",
+   b:"The pipeline proves its identity to AWS and receives credentials that expire within the hour. There is no stored access key. It publishes an immutable version and moves the alias to it. The environment is attached HERE, as configuration — the zip is untouched.",
+   p:"assume role via OIDC — no stored key, nothing to rotate\ntrust limited to one branch and two named environments\npublish version 12   (immutable)\nalias cutReleaseTest:live → 12\n\nconfiguration attached at deploy, never at build:\n  RARC_ENV = test\n\nobservability attached in the SAME template:\n  log group declared WITH retention — left to Lambda it\n  creates one that never expires and no stack owns, so it\n  survives the decommission and keeps billing\n  X-Ray tracing on the stage\n  Datadog-shaped metrics written to the log stream, never a\n  blocking POST from inside the handler\n  reserved concurrency — a release bot must not be able to\n  run a thousand copies of itself"},
+
+  {n:"Verify on test", t:"Prove it on test — the eight checks",
+   r:"Phase 5 — production-readiness validation with evidence. These are the evidence. Each one carries its own reason, so the report reads to someone who is not an engineer.",
+   b:"Thirteen checks exist. Five of them cut branches and open pull requests, so they need a real repository and run against the local stand-in instead. The other eight run against the live endpoint, every deploy, in both environments. Five are critical — a failure means do not cut over.",
+   p:"CRITICAL  1  health endpoint answers\n             deployed, initialised, reachable through API Gateway\n\nCRITICAL  2  health reports the expected environment\n             a test stage reporting prod config is how the wrong\n             bot ends up live\n\nCRITICAL  3  forged Slack signature is rejected\n             the endpoint is public; without this anyone who finds\n             the URL can cut a release branch\n\nCRITICAL  4  replayed Slack request is rejected\n             a captured request stays validly signed forever\n\nCRITICAL  5  Jira webhook with the wrong secret is rejected\n             that route is public too, and the secret is its only control\n\nIMPORTANT 6  malformed version is refused, not acted on\n             \"5.4\" would create a branch nobody expects\n\nIMPORTANT 7  input errors return 200 with a readable message\n             a non-2xx makes Slack show its own generic failure and\n             the user never sees the real error\n\nIMPORTANT 8  Jira webhook with no fixVersion is ignored, not failed\n             Jira DISABLES a webhook after repeated non-2xx responses"},
+
   {n:"The gate", t:"The run stops and waits", gate:true,
-   b:"GitHub holds the job. This is an environment protection rule, not a condition inside the workflow — editing the workflow would not remove it. Slack is notified at the same moment.",
-   p:"status: waiting\nslack: notified (awaiting)\nproduction: untouched"},
+   r:"Phase 4 and 6 — a controlled promotion. Production is never reached by a push alone; a person decides, and the decision is recorded.",
+   b:"GitHub holds the job. This is an environment protection rule, not a condition inside the workflow — editing the workflow would not remove it. Slack is notified at the same moment, so nobody has to be watching a pipeline.",
+   p:"status: waiting\nslack: notified (awaiting)\nproduction: untouched\n\nenforced by GitHub, not by the workflow — someone with\nwrite access cannot delete their way past it"},
+
   {n:"Approval", t:"A person approves", gate:true,
-   b:"Two routes. In GitHub a named reviewer clicks approve. Or the Slack button: the click is signature-checked, the clicker is checked against a named list, and every attempt is written down. The chat route is the weaker control, and it is labelled as such.",
-   p:'AUDIT {"event":"click",   "run_id":"37840483976","slack_user":"U0C7…KNW"}\nAUDIT {"event":"approved","run_id":"37840483976","detail":"production"}'},
+   r:"Phase 4 — approval and audit trail. Who approved, which release, and when, all recoverable afterwards.",
+   b:"Two routes. In GitHub a named reviewer clicks approve. Or the Slack button: the click is signature-checked, the clicker is checked against a named list, and every attempt is written down. The chat route is the weaker control and is labelled as such rather than presented as equivalent.",
+   p:'AUDIT {"event":"click",   "run_id":"37840483976","slack_user":"U0C7…KNW"}\nAUDIT {"event":"approved","run_id":"37840483976","detail":"production"}\n\nGitHub records: approved — "Approved from Slack by vamsi.d.atluri"\nan empty approver list permits NOBODY, not everybody'},
+
   {n:"Promote", t:"Promote — no build, because there is nothing to build",
-   b:"Production deploys the exact bytes test already validated. There is no compile step here — and not as an optimisation. There is nothing environment-specific to compile. The two environments differ only in the configuration attached to them, and in which alias the stage points at. The fingerprint is read back and compared again.",
-   p:"publish version 9\nalias cutRelease:live → 9\n\nartifact      jzz3Ku7c…   cutRelease      ┐ identical\nartifact      jzz3Ku7c…   cutReleaseTest  ┘ bytes\n\nconfiguration RARC_ENV=prod   cutRelease      ┐ the only\nconfiguration RARC_ENV=test   cutReleaseTest  ┘ difference\n\nrouting       stage prod → cutRelease:live\n              stage test → cutReleaseTest:live\n              ↑ which copy answers is configuration too"},
+   r:"Phase 4 — the same artifact in both accounts during the parallel run. Any difference between environments would make the comparison meaningless.",
+   b:"Production deploys the exact bytes test already validated. There is no compile step, and not as an optimisation — there is nothing environment-specific to compile. The two environments differ only in the configuration attached to them and in which alias the stage points at.",
+   p:"publish version 9\nalias cutRelease:live → 9\n\nartifact      jzz3Ku7c…   cutRelease      ┐ identical\nartifact      jzz3Ku7c…   cutReleaseTest  ┘ bytes\n\nconfiguration RARC_ENV=prod   cutRelease      ┐ the only\nconfiguration RARC_ENV=test   cutReleaseTest  ┘ difference\n\nrouting       stage prod → cutRelease:live\n              stage test → cutReleaseTest:live"},
+
   {n:"How it knows", t:"What tells it which environment it is",
-   b:"Three handoffs carry that decision, and not one of them is the build. CloudFormation writes the environment onto each function. Publishing a version freezes it beside the code. API Gateway's stage variable decides which function and alias a request even reaches. The process reads it at startup, and can also read the alias it was invoked through.",
-   p:"1  CloudFormation       infra/20-lambda.yaml\n     cutRelease           RARC_ENV: prod\n     cutReleaseTest       RARC_ENV: test\n\n2  publish-version      code + those variables frozen as version N\n   update-alias         live → N\n\n3  API Gateway          infra/30-apigw.yaml\n     stage prod           cutFn = cutRelease:live\n     stage test           cutFn = cutReleaseTest:live\n     integration URI      …:function:${stageVariables.cutFn}/invocations\n\n4  at invoke            RARC_ENV  read from the process environment\n                        alias     read from the invoked ARN\n                                  (Lambda-Runtime-Invoked-Function-Arn)"},
+   r:"Phase 3 — environment configuration and secrets, handled per environment. This is the mechanism that makes that possible without a separate build.",
+   b:"Four handoffs carry that decision, and not one of them is the build. CloudFormation writes the environment onto each function. Publishing a version freezes it beside the code. API Gateway's stage variable decides which function and alias a request even reaches. The process reads it at startup, and can also read the alias it was invoked through.",
+   p:"1  CloudFormation       infra/20-lambda.yaml\n     cutRelease           RARC_ENV: prod\n     cutReleaseTest       RARC_ENV: test\n\n2  publish-version      code + those variables frozen as version N\n   update-alias         live → N\n\n3  API Gateway          infra/30-apigw.yaml\n     stage prod           cutFn = cutRelease:live\n     stage test           cutFn = cutReleaseTest:live\n     integration URI      …:function:${stageVariables.cutFn}/invocations\n\n4  at invoke            RARC_ENV  read from the process environment\n                        alias     read from the invoked ARN"},
+
   {n:"Verify on prod", t:"Prove it on production",
-   b:"The same eight checks run again, now against production. Both environments report the same fingerprint, which is what makes “we shipped what we tested” a measurement rather than a claim.",
-   p:"✓ 8 behaviour checks on production\n✓ prod fingerprint == test fingerprint"},
+   r:"Phase 5 — the acceptance evidence their decommission gate depends on. During the parallel run the same command answers a better question: did both accounts give identical answers?",
+   b:"The same eight checks run again, now against production. Both environments then report the same fingerprint, which is what makes “we shipped what we tested” a measurement rather than a claim. Results are published as CloudWatch metrics, so a suite that stops running is itself an alarm.",
+   p:"✓ 8 behaviour checks on production\n✓ prod fingerprint == test fingerprint\n\nthe suite publishes its own results as metrics:\n  alarm  contract-critical-failure   a critical check failed\n  alarm  contract-not-reporting      nothing in 3h, TreatMissingData\n                                     = breaching\n  alarm  unauthorised-request spike  the public endpoint probed,\n                                     or a half-landed rotation\n\n⚠ a verification pipeline that STOPS looks exactly like a\n  healthy system. Every other dashboard stays green and the\n  absence is invisible — which is why SILENCE is alarmed.\n\n⚠ an alarm with no dimensions matches only the dimensionless\n  series; it does not aggregate. Ours sat red through four\n  green runs before that was found."},
+
   {n:"Rollback", t:"And if it is wrong",
-   b:"The previous version is still published. Rolling back moves the alias back to it — one command, seconds, nothing rebuilds and no pipeline runs. One honest limit: the ARTIFACT is environment-agnostic, but a published VERSION is not — it freezes the configuration alongside the code.",
-   p:"aws lambda update-alias --name live --function-version 8\n\n⚠ a version freezes CONFIGURATION too, so rotating a\n  secret invalidates every older version as a target"},
+   r:"Phase 6 — the cutover needs a rollback plan. This is it, and it is one command rather than a document.",
+   b:"The previous version is still published. Rolling back moves the alias back to it — one command, seconds, nothing rebuilds and no pipeline runs. One honest limit: the ARTIFACT is environment-agnostic, but a published VERSION is not — it freezes configuration alongside the code.",
+   p:"aws lambda update-alias --name live --function-version 8\n\n⚠ THE FINDING WORTH RAISING IN WEEK ONE\n  a version freezes CONFIGURATION too, so rotating a secret\n  invalidates every older version as a rollback target.\n\n  their cutover steps 6, 7 and 8 rotate the secrets — so the\n  rollback plan stops working on the exact day it is needed,\n  and nobody finds out until they reach for it."},
 ];
 
 let fcur = 0, ftimer = null;
@@ -394,6 +421,7 @@ function paintFlow(){
   document.getElementById("f-num").textContent   = "Step " + (fcur+1) + " of " + STEPS.length;
   document.getElementById("f-title").textContent = s.t;
   document.getElementById("f-body").textContent  = s.b;
+  document.getElementById("f-req").textContent   = s.r;
   document.getElementById("f-pre").textContent   = s.p;
 }
 
