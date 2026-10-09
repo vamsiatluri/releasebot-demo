@@ -77,6 +77,31 @@
          font-family:var(--mono); font-size:12px; color:var(--muted);
          display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between}
 
+  /* live pipeline */
+  .lp{background:var(--surface); border:1px solid var(--rule); border-radius:5px; padding:20px 22px}
+  .lp-head{display:flex; flex-wrap:wrap; gap:10px 18px; align-items:baseline;
+           justify-content:space-between; margin-bottom:16px}
+  .lp-head .mono{font-size:12.5px; color:var(--muted)}
+  .lp-steps{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px}
+  .lp-step{border:1px solid var(--rule); border-left:3px solid var(--rule);
+           border-radius:4px; padding:11px 13px; background:var(--surface-2)}
+  .lp-step .nm{font-family:var(--display); font-size:12.5px; font-weight:600; color:var(--ink-2)}
+  .lp-step .st{font-family:var(--mono); font-size:10.5px; letter-spacing:.06em;
+               text-transform:uppercase; margin-top:4px; color:var(--muted)}
+  .lp-step.done{border-left-color:var(--clear)}      .lp-step.done .st{color:var(--clear)}
+  .lp-step.run{border-left-color:var(--signal)}      .lp-step.run .st{color:var(--signal)}
+  .lp-step.wait{border-left-color:var(--warn); background:var(--warn-soft)}
+  .lp-step.wait .st{color:var(--warn)}
+  .lp-step.fail{border-left-color:var(--blocking); background:var(--blocking-soft)}
+  .lp-step.fail .st{color:var(--blocking)}
+  .lp-step.idle{opacity:.55}
+  .lp-note{margin:14px 0 0; font-size:13.5px; color:var(--muted)}
+  .live-dot{display:inline-block; width:7px; height:7px; border-radius:50%;
+            background:var(--clear); margin-right:6px; vertical-align:1px}
+  @keyframes lp-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .live-dot.on{animation:lp-pulse 1.8s ease-in-out infinite}
+  @media (prefers-reduced-motion:reduce){.live-dot.on{animation:none}}
+
   /* walkthrough */
   .flowwrap{display:grid; grid-template-columns:minmax(200px,236px) 1fr;
             background:var(--surface); border:1px solid var(--rule); border-radius:4px; overflow:hidden}
@@ -181,6 +206,22 @@
 
   <div class="wrap">
     <div id="verdict"></div>
+
+    <section>
+      <div class="sechead">
+        <h2><span class="live-dot on" id="live"></span>The pipeline, right now</h2>
+        <p>Read live from GitHub every 15 seconds. A commit to <span class="mono">main</span>
+           starts this on its own — nobody runs anything.</p>
+      </div>
+      <div class="lp">
+        <div class="lp-head">
+          <div><strong id="lp-title" style="font-family:var(--display)"></strong></div>
+          <span class="mono" id="lp-meta"></span>
+        </div>
+        <div class="lp-steps" id="lp-steps"></div>
+        <p class="lp-note" id="lp-note"></p>
+      </div>
+    </section>
 
     <section>
       <div class="sechead">
@@ -423,7 +464,9 @@ async function load(){
   if (!r.ok) throw new Error('the status API returned ' + r.status);
   LIVE = await r.json();
   render(LIVE);
+  renderRun(LIVE.run);
   paintFlow();
+  startPolling();
 }
 
 function showGate(msg){
@@ -432,6 +475,91 @@ function showGate(msg){
   document.getElementById('app').hidden = true;
 }
 
+
+
+// ── The pipeline panel ───────────────────────────────────────────────────────
+// GitHub's job states mapped onto the five things a person actually wants to
+// know. A job that has not started yet is "idle", not "failed" -- rendering an
+// unstarted job as a problem is how a dashboard trains people to ignore it.
+const LP = [
+  {job:"build",          nm:"Build once"},
+  {job:"test",           nm:"Deploy + verify test"},
+  {job:"notify-gate",    nm:"Notify Slack"},
+  {job:"__gate__",       nm:"Approval gate"},
+  {job:"prod",           nm:"Promote + verify prod"},
+];
+
+function lpClass(j, runStatus){
+  if (!j) return ["idle", "not started"];
+  if (j.status === "completed"){
+    if (j.conclusion === "success")   return ["done", "passed"];
+    if (j.conclusion === "skipped")   return ["idle", "skipped"];
+    if (j.conclusion === "cancelled") return ["idle", "cancelled"];
+    return ["fail", j.conclusion || "failed"];
+  }
+  if (j.status === "waiting") return ["wait", "waiting for a person"];
+  if (j.status === "queued")  return ["run", "queued"];
+  return ["run", "running"];
+}
+
+function renderRun(run){
+  const steps = document.getElementById("lp-steps");
+  if (!run){
+    document.getElementById("lp-title").textContent = "No runs yet";
+    document.getElementById("lp-meta").textContent = "";
+    steps.innerHTML = ""; document.getElementById("lp-note").textContent = "";
+    return;
+  }
+  if (run.error){
+    document.getElementById("lp-title").textContent = "Pipeline state unavailable";
+    document.getElementById("lp-meta").textContent = run.error;
+    steps.innerHTML = "";
+    document.getElementById("lp-note").textContent =
+      "The environment state above is still read live from AWS \u2014 only this panel is missing.";
+    return;
+  }
+
+  const byName = {};
+  (run.jobs || []).forEach(j => { byName[j.name] = j; });
+  const prod = byName["prod"];
+
+  steps.innerHTML = LP.map(sp => {
+    let j = byName[sp.job];
+    if (sp.job === "__gate__"){
+      // The gate is not a job. It is the prod job being held, which GitHub
+      // reports as status "waiting" on that job.
+      j = prod && prod.status === "waiting" ? {status:"waiting"} :
+          prod && prod.status === "completed" ? {status:"completed", conclusion:"success"} : null;
+    }
+    if (sp.job === "prod" && prod && prod.status === "waiting") j = null;
+    const [cls, label] = lpClass(j, run.status);
+    return `<div class="lp-step ${cls}"><div class="nm">${esc(sp.nm)}</div>` +
+           `<div class="st">${esc(label)}</div></div>`;
+  }).join("");
+
+  document.getElementById("lp-title").textContent =
+    "Run #" + run.number + " \u00b7 " + (run.title || run.commit);
+  document.getElementById("lp-meta").textContent =
+    run.commit + " \u00b7 " + (run.actor || "") + " \u00b7 " +
+    (run.conclusion || run.status) +
+    // Said out loud rather than hidden: a panel that silently serves a cached
+    // value while GitHub is rate-limiting it is a panel that lies quietly.
+    (run.stale ? " \u00b7 cached (GitHub unreachable just now)" : "");
+  document.getElementById("live").classList.toggle("on", !run.stale);
+
+  const held = prod && prod.status === "waiting";
+  document.getElementById("lp-note").textContent = held
+    ? "Production is untouched. It stays that way until a named reviewer approves \u2014 in GitHub, or from the Slack button."
+    : run.status === "completed" && run.conclusion === "success"
+      ? "Finished. Production received the exact artifact test validated \u2014 no rebuild."
+      : "In flight.";
+}
+
+let POLL = null;
+function startPolling(){
+  if (POLL) return;
+  POLL = setInterval(() => { load().catch(() => {}); }, 15000);
+}
 
 // ── The end-to-end walkthrough ───────────────────────────────────────────────
 // Real values from run 37840483976. Nothing here is illustrative.

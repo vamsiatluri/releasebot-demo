@@ -51,14 +51,37 @@ type health struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// A job as GitHub reports it, plus where it sits in the release story.
+type jobState struct {
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+}
+
+type runState struct {
+	Number     int        `json:"number"`
+	ID         int64      `json:"id"`
+	Commit     string     `json:"commit"`
+	Title      string     `json:"title"`
+	Actor      string     `json:"actor"`
+	Status     string     `json:"status"`
+	Conclusion string     `json:"conclusion"`
+	URL        string     `json:"url"`
+	Jobs       []jobState `json:"jobs"`
+	ReadAt     string     `json:"readAt"`
+	Stale      bool       `json:"stale,omitempty"`
+	Error      string     `json:"error,omitempty"`
+}
+
 type payload struct {
-	Account string   `json:"account"`
-	Region  string   `json:"region"`
-	ReadAt  string   `json:"readAt"`
-	Pairs   []pair   `json:"pairs"`
-	Health  []health `json:"health"`
-	InSync  bool     `json:"inSync"`
-	Notes   []string `json:"notes"`
+	Account string    `json:"account"`
+	Region  string    `json:"region"`
+	ReadAt  string    `json:"readAt"`
+	Pairs   []pair    `json:"pairs"`
+	Health  []health  `json:"health"`
+	InSync  bool      `json:"inSync"`
+	Run     *runState `json:"run,omitempty"`
+	Notes   []string  `json:"notes"`
 }
 
 func main() {
@@ -134,6 +157,13 @@ func build(ctx context.Context) payload {
 		}(s)
 	}
 	wg.Wait()
+
+	// The pipeline's own state. Read live from GitHub rather than from anything
+	// a deploy step wrote down -- a dashboard that renders what a step CLAIMED
+	// keeps saying it long after it stops being true.
+	if r := cachedRun(ctx); r != nil {
+		out.Run = r
+	}
 
 	out.InSync = true
 	for _, p := range out.Pairs {
@@ -224,4 +254,147 @@ func readHealth(ctx context.Context, base, stage string) health {
 	}
 	h.OK, h.Env, h.Commit, h.Built = got.OK, got.Env, got.Commit, got.Built
 	return h
+}
+
+// ── The pipeline panel, and why it is cached ────────────────────────────────
+//
+// Every browser tab polls this endpoint. Without a cache, N tabs at a 15s
+// refresh is 8N GitHub calls a minute, and GitHub's limit is per CREDENTIAL,
+// not per viewer -- so the dashboard would be the thing that exhausts the quota
+// the release pipeline itself depends on. One cached read serves every tab.
+//
+// ⚠️ The repository is public, so this works with NO token at all -- but
+// unauthenticated reads are capped at 60/hour PER EGRESS IP, and a Lambda's
+// egress IP is shared. So the TTL is deliberately different for the two cases:
+// a token buys 5,000/hour and a live-feeling refresh; without one the panel
+// stays correct but refreshes slowly, and says so.
+var runCache struct {
+	mu  sync.Mutex
+	at  time.Time
+	val *runState
+}
+
+func runTTL() time.Duration {
+	if os.Getenv("GITHUB_TOKEN") != "" {
+		return 10 * time.Second
+	}
+	return 90 * time.Second
+}
+
+// cachedRun returns the pipeline panel, refreshing it at most once per TTL.
+//
+// On a refresh failure it serves the LAST GOOD value marked stale rather than
+// an error. A dashboard that blanks the panel the moment GitHub rate-limits it
+// has turned a slow refresh into an apparent outage.
+func cachedRun(ctx context.Context) *runState {
+	runCache.mu.Lock()
+	defer runCache.mu.Unlock()
+
+	if runCache.val != nil && time.Since(runCache.at) < runTTL() {
+		return runCache.val
+	}
+	fresh := readRun(ctx)
+	if fresh == nil {
+		return runCache.val
+	}
+	if fresh.Error != "" && runCache.val != nil && runCache.val.Error == "" {
+		stale := *runCache.val
+		stale.Stale = true
+		return &stale
+	}
+	fresh.ReadAt = time.Now().UTC().Format(time.RFC3339)
+	runCache.at, runCache.val = time.Now(), fresh
+	return fresh
+}
+
+// readRun fetches the most recent run of the release workflow and its jobs.
+//
+// ⚠️ A failure here must not fail the whole page. The environment state above
+// is read from AWS and is still true; losing the pipeline panel is a degraded
+// view, not an outage, and the UI says which part is missing.
+func readRun(ctx context.Context) *runState {
+	owner, repo := os.Getenv("GITHUB_OWNER"), os.Getenv("GITHUB_REPO")
+	token, wf := os.Getenv("GITHUB_TOKEN"), os.Getenv("GITHUB_WORKFLOW_FILE")
+	if owner == "" || repo == "" || wf == "" {
+		return nil
+	}
+
+	get := func(path string, out any) error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+			"https://api.github.com/repos/"+owner+"/"+repo+path, nil)
+		if err != nil {
+			return err
+		}
+		// Omitted entirely when empty -- an `Authorization: Bearer ` header with
+		// no value is a 401, which would read as a bad token rather than as the
+		// anonymous read it is meant to be.
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		resp, err := (&http.Client{Timeout: 6 * time.Second}).Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if resp.StatusCode != 200 {
+			// Never echo the body: a GitHub error names the repo and the token's
+			// owner. Rate limiting is called out by name because "403" on its own
+			// sends people looking for a permissions problem that is not there.
+			if resp.StatusCode == 403 && resp.Header.Get("X-RateLimit-Remaining") == "0" {
+				return fmt.Errorf("github rate limit reached")
+			}
+			return fmt.Errorf("github returned %d", resp.StatusCode)
+		}
+		return json.Unmarshal(raw, out)
+	}
+
+	var runs struct {
+		WorkflowRuns []struct {
+			ID           int64  `json:"id"`
+			RunNumber    int    `json:"run_number"`
+			HeadSHA      string `json:"head_sha"`
+			DisplayTitle string `json:"display_title"`
+			Status       string `json:"status"`
+			Conclusion   string `json:"conclusion"`
+			HTMLURL      string `json:"html_url"`
+			Actor        struct {
+				Login string `json:"login"`
+			} `json:"actor"`
+		} `json:"workflow_runs"`
+	}
+	if err := get("/actions/workflows/"+wf+"/runs?per_page=1", &runs); err != nil {
+		return &runState{Error: err.Error()}
+	}
+	if len(runs.WorkflowRuns) == 0 {
+		return nil
+	}
+	r := runs.WorkflowRuns[0]
+	st := &runState{
+		Number: r.RunNumber, ID: r.ID, Commit: shortSHA(r.HeadSHA),
+		Title: r.DisplayTitle, Actor: r.Actor.Login,
+		Status: r.Status, Conclusion: r.Conclusion, URL: r.HTMLURL,
+	}
+
+	var jobs struct {
+		Jobs []struct {
+			Name       string `json:"name"`
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+		} `json:"jobs"`
+	}
+	if err := get(fmt.Sprintf("/actions/runs/%d/jobs", r.ID), &jobs); err == nil {
+		for _, j := range jobs.Jobs {
+			st.Jobs = append(st.Jobs, jobState{j.Name, j.Status, j.Conclusion})
+		}
+	}
+	return st
+}
+
+func shortSHA(s string) string {
+	if len(s) > 7 {
+		return s[:7]
+	}
+	return s
 }
