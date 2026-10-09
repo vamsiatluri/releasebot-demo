@@ -7,8 +7,29 @@ Description: >
 Parameters:
   ArtifactBucket:     {Type: String}
   CutReleaseKey:      {Type: String, Default: 'releasebot/cutrelease.zip'}
+  # ⚠️ These were applied BY HAND and CloudFormation did not know about them.
+  # A redeploy of this stack silently wiped them off the test function, which
+  # then failed at INIT with "GITHUB_TOKEN is required" -- configuration drift
+  # destroyed by the very tool that is supposed to own it. They are parameters
+  # now so the template is the single owner.
+  #
+  # ⛔ This is still the WRONG long-term home. A value here is frozen into every
+  # published version, which is what makes rotating a secret invalidate every
+  # older version as a rollback target. The execution roles are already scoped
+  # for secretsmanager:GetSecretValue on ${SecretsPrefix}/<env>/* -- resolving
+  # them there at INIT is the Phase 3 change, and it is what removes the trap.
+  GitHubToken:         {Type: String, NoEcho: true, Default: ''}
+  SlackToken:          {Type: String, NoEcho: true, Default: ''}
+  SlackSigningSecret:  {Type: String, NoEcho: true, Default: ''}
+  JiraWebhookSecret:   {Type: String, NoEcho: true, Default: ''}
   MergebackKey:       {Type: String, Default: 'releasebot/mergeback.zip'}
   CutReleaseRoleArn:  {Type: String}
+  CutReleaseTestRoleArn:
+    Type: String
+    Description: Execution role for the TEST twin. Separate from the prod one on
+      purpose -- a shared role means a shared blast radius.
+  MergebackTestRoleArn:
+    Type: String
   MergebackRoleArn:   {Type: String}
   RarcConfigUrl:      {Type: String, Default: ''}
   DefaultOwner:       {Type: String, Default: 'msnbc'}
@@ -100,6 +121,10 @@ Resources:
           DD_ENV: prod
           DD_SITE: datadoghq.com
           DD_TRACE_ENABLED: 'true'
+          GITHUB_TOKEN: !Ref GitHubToken
+          SLACK_TOKEN: !Ref SlackToken
+          SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
+          JIRA_WEBHOOK_SECRET: !Ref JiraWebhookSecret
       Tags:
         - {Key: app,        Value: releasebot}
         - {Key: migration,  Value: msnbc-dev-to-msnbc-prod}
@@ -125,7 +150,7 @@ Resources:
       Runtime: !Ref Runtime
       Handler: bootstrap
       Architectures: [x86_64]
-      Role: !Ref CutReleaseRoleArn
+      Role: !Ref CutReleaseTestRoleArn
       Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref CutReleaseKey}
       MemorySize: 512
       Timeout: 30
@@ -141,6 +166,10 @@ Resources:
           RELEASEBOT_ACK_ONLY: '1'
           DD_SERVICE: releasebot
           DD_ENV: test
+          GITHUB_TOKEN: !Ref GitHubToken
+          SLACK_TOKEN: !Ref SlackToken
+          SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
+          JIRA_WEBHOOK_SECRET: !Ref JiraWebhookSecret
           DD_SITE: datadoghq.com
       Tags:
         - {Key: app, Value: releasebot}
@@ -179,6 +208,10 @@ Resources:
           RELEASEBOT_ACK_ONLY: '1'
           DD_SERVICE: releasebot
           DD_ENV: prod
+          GITHUB_TOKEN: !Ref GitHubToken
+          SLACK_TOKEN: !Ref SlackToken
+          SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
+          JIRA_WEBHOOK_SECRET: !Ref JiraWebhookSecret
       Tags:
         - {Key: app, Value: releasebot}
 
@@ -200,7 +233,7 @@ Resources:
       Runtime: !Ref Runtime
       Handler: bootstrap
       Architectures: [x86_64]
-      Role: !Ref MergebackRoleArn
+      Role: !Ref MergebackTestRoleArn
       Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref MergebackKey}
       MemorySize: 512
       Timeout: 30
@@ -216,6 +249,10 @@ Resources:
           RELEASEBOT_ACK_ONLY: '1'
           DD_SERVICE: releasebot
           DD_ENV: test
+          GITHUB_TOKEN: !Ref GitHubToken
+          SLACK_TOKEN: !Ref SlackToken
+          SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
+          JIRA_WEBHOOK_SECRET: !Ref JiraWebhookSecret
       Tags:
         - {Key: app, Value: releasebot}
 

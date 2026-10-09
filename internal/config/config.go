@@ -21,8 +21,14 @@ import (
 )
 
 type Config struct {
-	Env           string // RARC_ENV: "prod" | "test"
-	ConfigURL     string // RARC_CONFIG_URL: repo/branch policy document
+	Env string // RARC_ENV: "prod" | "test"
+	// Where the per-environment values actually came from, and the path read.
+	// Reported on /health so a silent fallback to environment variables can
+	// never be invisible -- a degraded config that looks healthy is worse than
+	// a loud failure.
+	ConfigSource string // "ssm" | "env"
+	ConfigPath   string
+	ConfigURL    string // RARC_CONFIG_URL: repo/branch policy document
 	// ⚠️ RELEASEBOT_-prefixed, not GITHUB_API_URL.
 	//
 	// GitHub Actions reserves the GITHUB_* prefix and sets GITHUB_API_URL to
@@ -161,4 +167,30 @@ func envOr(k, d string) string {
 		return v
 	}
 	return d
+}
+
+// WithParameters overlays values read from Parameter Store onto the config.
+//
+// ⚠️ Only keys that are actually PRESENT and non-empty win. A missing or blank
+// parameter must not blank out a working environment variable -- a
+// half-populated path would be worse than no path at all, and would fail at the
+// first request rather than at startup.
+//
+// ⚠️ RARC_ENV is deliberately NOT overridable here. The environment selects
+// which path to read; letting the path then rename the environment is a loop,
+// and exactly how a test function would end up calling itself prod.
+func (c Config) WithParameters(v map[string]string) Config {
+	set := func(dst *string, key string) {
+		if s, ok := v[key]; ok && strings.TrimSpace(s) != "" {
+			*dst = s
+		}
+	}
+	set(&c.DefaultBranch, "default-branch")
+	set(&c.ConfigURL, "config-url")
+	set(&c.DatadogSite, "datadog-site")
+	// default-owner and slack-channel are read straight from the environment by
+	// the handler today rather than carried on Config; they are in the path and
+	// will move here when that is tidied, which is why they are listed in the
+	// IAM grant already.
+	return c
 }

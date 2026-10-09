@@ -211,6 +211,26 @@ Resources:
       ManagedPolicyArns:
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
       Policies:
+        - PolicyName: env-config
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # ⚠️ Scoped to ONE environment's path. There are FOUR execution
+              # roles, one per function, because cutRelease and cutReleaseTest
+              # previously SHARED a role -- so the per-environment boundary this
+              # architecture is supposed to provide did not actually exist.
+              # Found by simulate-principal-policy, not by reading the template.
+              #
+              # This is also the real argument against collapsing the pairs into
+              # one function with two aliases: a function has exactly one
+              # execution role whichever alias you arrive through, so the
+              # collapsed version would need BOTH paths and both secret
+              # subtrees, and the wall between the environments would be gone.
+              - Effect: Allow
+                Action: [ssm:GetParametersByPath, ssm:GetParameter, ssm:GetParameters]
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod/*'
         - PolicyName: secrets
           PolicyDocument:
             Version: '2012-10-17'
@@ -219,7 +239,56 @@ Resources:
               # secretsmanager:GetSecretValue on "*".
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
-                Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretsPrefix}/*'
+                Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretsPrefix}/prod/*'
+              - Effect: Allow
+                Action: [kms:Decrypt]
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+
+  CutReleaseTestExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'releasebot-exec-cutrelease-test'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: env-config
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # ⚠️ Scoped to ONE environment's path. There are FOUR execution
+              # roles, one per function, because cutRelease and cutReleaseTest
+              # previously SHARED a role -- so the per-environment boundary this
+              # architecture is supposed to provide did not actually exist.
+              # Found by simulate-principal-policy, not by reading the template.
+              #
+              # This is also the real argument against collapsing the pairs into
+              # one function with two aliases: a function has exactly one
+              # execution role whichever alias you arrive through, so the
+              # collapsed version would need BOTH paths and both secret
+              # subtrees, and the wall between the environments would be gone.
+              - Effect: Allow
+                Action: [ssm:GetParametersByPath, ssm:GetParameter, ssm:GetParameters]
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/test'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/test/*'
+        - PolicyName: secrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Scoped to this function's own secrets by name prefix, not
+              # secretsmanager:GetSecretValue on "*".
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretsPrefix}/test/*'
               - Effect: Allow
                 Action: [kms:Decrypt]
                 Resource: '*'
@@ -240,13 +309,80 @@ Resources:
       ManagedPolicyArns:
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
       Policies:
+        - PolicyName: env-config
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # ⚠️ Scoped to ONE environment's path. There are FOUR execution
+              # roles, one per function, because cutRelease and cutReleaseTest
+              # previously SHARED a role -- so the per-environment boundary this
+              # architecture is supposed to provide did not actually exist.
+              # Found by simulate-principal-policy, not by reading the template.
+              #
+              # This is also the real argument against collapsing the pairs into
+              # one function with two aliases: a function has exactly one
+              # execution role whichever alias you arrive through, so the
+              # collapsed version would need BOTH paths and both secret
+              # subtrees, and the wall between the environments would be gone.
+              - Effect: Allow
+                Action: [ssm:GetParametersByPath, ssm:GetParameter, ssm:GetParameters]
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod/*'
         - PolicyName: secrets
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
-                Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretsPrefix}/*'
+                Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretsPrefix}/prod/*'
+              - Effect: Allow
+                Action: [kms:Decrypt]
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+
+  MergebackTestExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'releasebot-exec-mergeback-test'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: env-config
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # ⚠️ Scoped to ONE environment's path. There are FOUR execution
+              # roles, one per function, because cutRelease and cutReleaseTest
+              # previously SHARED a role -- so the per-environment boundary this
+              # architecture is supposed to provide did not actually exist.
+              # Found by simulate-principal-policy, not by reading the template.
+              #
+              # This is also the real argument against collapsing the pairs into
+              # one function with two aliases: a function has exactly one
+              # execution role whichever alias you arrive through, so the
+              # collapsed version would need BOTH paths and both secret
+              # subtrees, and the wall between the environments would be gone.
+              - Effect: Allow
+                Action: [ssm:GetParametersByPath, ssm:GetParameter, ssm:GetParameters]
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/test'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/test/*'
+        - PolicyName: secrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretsPrefix}/test/*'
               - Effect: Allow
                 Action: [kms:Decrypt]
                 Resource: '*'
@@ -261,6 +397,12 @@ Outputs:
   CutReleaseExecutionRoleArn:
     Value: !GetAtt CutReleaseExecutionRole.Arn
     Export: {Name: !Sub '${AWS::StackName}-CutReleaseExecRoleArn'}
+  CutReleaseTestExecutionRoleArn:
+    Value: !GetAtt CutReleaseTestExecutionRole.Arn
+    Export: {Name: !Sub '${AWS::StackName}-CutReleaseTestExecRoleArn'}
+  MergebackTestExecutionRoleArn:
+    Value: !GetAtt MergebackTestExecutionRole.Arn
+    Export: {Name: !Sub '${AWS::StackName}-MergebackTestExecRoleArn'}
   MergebackExecutionRoleArn:
     Value: !GetAtt MergebackExecutionRole.Arn
     Export: {Name: !Sub '${AWS::StackName}-MergebackExecRoleArn'}

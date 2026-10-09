@@ -5,9 +5,10 @@
 // what `provided.*` actually is -- and pulling the SDK in for two GET requests
 // would be the only dependency in the tree.
 //
-// ⚠️ It signs GET requests with an empty body and nothing else. That is all the
-// dashboard needs, and a signer that quietly half-supports POST is worse than
-// one that does not claim to.
+// ⚠️ It signs GET with an empty body and POST with a JSON body. Those are the
+// two shapes in use here (Lambda's control plane is REST-ish and GET; Parameter
+// Store is AWS-JSON and POST). A signer that quietly half-supports a third
+// shape would be worse than one that does not claim to.
 package awssig
 
 import (
@@ -46,8 +47,15 @@ func FromEnvironment() (Credentials, error) {
 	return c, nil
 }
 
-// SignGET adds the Authorization header to req. service is e.g. "lambda".
+// SignGET signs a GET with no body.
 func SignGET(req *http.Request, c Credentials, service, region string, now time.Time) {
+	Sign(req, nil, c, service, region, now)
+}
+
+// Sign adds the Authorization header to req. body must be EXACTLY the bytes
+// that will be sent -- the signature covers their hash, so re-encoding the body
+// afterwards invalidates it. service is e.g. "lambda" or "ssm".
+func Sign(req *http.Request, body []byte, c Credentials, service, region string, now time.Time) {
 	amzDate := now.UTC().Format("20060102T150405Z")
 	dateOnly := now.UTC().Format("20060102")
 
@@ -62,13 +70,34 @@ func SignGET(req *http.Request, c Credentials, service, region string, now time.
 		host = req.URL.Host
 	}
 
-	signed := []string{"host", "x-amz-date"}
-	canonical := "host:" + host + "\n" + "x-amz-date:" + amzDate + "\n"
+	payloadHash := emptyBodySHA256
+	if len(body) > 0 {
+		payloadHash = hashHex(string(body))
+	}
+
+	// ⚠️ Canonical headers must be sorted by name and must include every header
+	// named in SignedHeaders -- and x-amz-target is part of the AWS-JSON
+	// protocol, so omitting it from the signature makes every SSM call fail
+	// with SignatureDoesNotMatch, which reads like a bad secret key.
+	hdrs := map[string]string{"host": host, "x-amz-date": amzDate}
 	if c.SessionToken != "" {
-		signed = append(signed, "x-amz-security-token")
-		canonical += "x-amz-security-token:" + c.SessionToken + "\n"
+		hdrs["x-amz-security-token"] = c.SessionToken
+	}
+	if t := req.Header.Get("X-Amz-Target"); t != "" {
+		hdrs["x-amz-target"] = t
+	}
+	if ct := req.Header.Get("Content-Type"); ct != "" {
+		hdrs["content-type"] = ct
+	}
+	signed := make([]string, 0, len(hdrs))
+	for k := range hdrs {
+		signed = append(signed, k)
 	}
 	sort.Strings(signed)
+	canonical := ""
+	for _, k := range signed {
+		canonical += k + ":" + hdrs[k] + "\n"
+	}
 	signedHeaders := strings.Join(signed, ";")
 
 	// ⚠️ The canonical URI must be the ENCODED path. A Lambda function name is
@@ -81,7 +110,7 @@ func SignGET(req *http.Request, c Credentials, service, region string, now time.
 		req.URL.RawQuery,
 		canonical,
 		signedHeaders,
-		emptyBodySHA256,
+		payloadHash,
 	}, "\n")
 
 	scope := strings.Join([]string{dateOnly, region, service, "aws4_request"}, "/")

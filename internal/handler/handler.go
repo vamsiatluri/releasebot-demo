@@ -83,9 +83,14 @@ func (h *Handler) Handle(ctx context.Context, req events.APIGatewayProxyRequest)
 	// questions, and a deploy pipeline needs the second one -- a green deploy
 	// against a stale artifact looks identical to a good one otherwise.
 	if strings.HasSuffix(req.Path, "/health") || req.QueryStringParameters["health"] == "1" {
+		// configSource and configPath are reported on purpose. A fallback to
+		// environment variables is survivable but must never be SILENT -- a
+		// degraded config that looks healthy is worse than a loud failure.
 		return events.JSON(200, fmt.Sprintf(
-			`{"ok":true,"env":%q,"action":%q,"stage":%q,"commit":%q,"built":%q}`,
-			h.Cfg.Env, h.Action, req.RequestContext.Stage, BuildCommit, BuildTime))
+			`{"ok":true,"env":%q,"action":%q,"stage":%q,"commit":%q,"built":%q,`+
+				`"configSource":%q,"configPath":%q,"defaultBranch":%q}`,
+			h.Cfg.Env, h.Action, req.RequestContext.Stage, BuildCommit, BuildTime,
+			h.Cfg.ConfigSource, h.Cfg.ConfigPath, h.Cfg.DefaultBranch))
 	}
 
 	switch {

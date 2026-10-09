@@ -14,6 +14,7 @@ import (
 	"github.com/vamsiatluri/releasebot-migration/internal/githubclient"
 	"github.com/vamsiatluri/releasebot-migration/internal/handler"
 	"github.com/vamsiatluri/releasebot-migration/internal/obs"
+	"github.com/vamsiatluri/releasebot-migration/internal/paramstore"
 	"github.com/vamsiatluri/releasebot-migration/internal/release"
 	"github.com/vamsiatluri/releasebot-migration/internal/slackclient"
 )
@@ -24,6 +25,26 @@ func Build(ctx context.Context, action handler.Action, alias string, ackOnly boo
 		return nil, err
 	}
 	cfg = cfg.WithAlias(alias)
+
+	// ── Per-environment configuration, read ONCE at INIT ────────────────────
+	//
+	// The version froze RARC_ENV -- a POINTER. The values behind it live at
+	// /releasebot/<env>/ and are read here, so rotating one does not strand
+	// every older version as a rollback target.
+	//
+	// A failure is deliberately NOT fatal. The function still holds working
+	// environment variables, and Parameter Store being briefly unavailable
+	// should degrade to the previous behaviour, not take the service down.
+	// Which source won is recorded and reported on /health.
+	cfg.ConfigSource, cfg.ConfigPath = "env", "/releasebot/"+cfg.Env+"/"
+	if ps, err := paramstore.Load(ctx, cfg.Env); err != nil {
+		obs.New("releasebot", cfg.Env).
+			With("path", cfg.ConfigPath).With("reason", err.Error()).
+			Warn("parameter store unavailable; falling back to environment variables")
+	} else {
+		cfg = cfg.WithParameters(ps.Values)
+		cfg.ConfigSource, cfg.ConfigPath = ps.Source, ps.Path
+	}
 
 	log := obs.New(cfg.DatadogService, cfg.Env).With("action", string(action))
 	log.With("config", fmt.Sprintf("%v", cfg.Redacted())).Info("releasebot starting")
