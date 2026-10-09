@@ -224,9 +224,9 @@
               <text class="dg-s" x="151" y="61" text-anchor="middle">alias</text>
               <path class="dg-track" d="M182 51H430"/>
               <rect class="dg-chip" id="p0" x="252" y="35" width="76" height="32" rx="6"/>
-              <text class="dg-t" x="290" y="55" text-anchor="middle">v8</text>
+              <text class="dg-t" id="p0t" x="290" y="55" text-anchor="middle"></text>
               <rect class="dg-chip" id="p1" x="352" y="35" width="76" height="32" rx="6"/>
-              <text class="dg-t" x="390" y="55" text-anchor="middle">v9</text>
+              <text class="dg-t" id="p1t" x="390" y="55" text-anchor="middle"></text>
               <g class="dg-ptr" id="pptr" transform="translate(244,51)"><path d="M0 -5L8 0L0 5z"/></g>
               <text class="dg-s" x="440" y="48">cutRelease</text>
               <text class="dg-s" x="440" y="60">RARC_ENV=prod</text>
@@ -242,9 +242,9 @@
               <text class="dg-s" x="151" y="143" text-anchor="middle">alias</text>
               <path class="dg-track" d="M182 133H430"/>
               <rect class="dg-chip" id="t0" x="252" y="117" width="76" height="32" rx="6"/>
-              <text class="dg-t" x="290" y="137" text-anchor="middle">v11</text>
+              <text class="dg-t" id="t0t" x="290" y="137" text-anchor="middle"></text>
               <rect class="dg-chip" id="t1" x="352" y="117" width="76" height="32" rx="6"/>
-              <text class="dg-t" x="390" y="137" text-anchor="middle">v12</text>
+              <text class="dg-t" id="t1t" x="390" y="137" text-anchor="middle"></text>
               <g class="dg-ptr" id="tptr" transform="translate(244,133)"><path d="M0 -5L8 0L0 5z"/></g>
               <text class="dg-s" x="440" y="130">cutReleaseTest</text>
               <text class="dg-s" x="440" y="142">RARC_ENV=test</text>
@@ -254,7 +254,7 @@
               <rect class="dg-box" x="188" y="84" width="240" height="20" rx="4"
                     style="stroke:var(--clear)"/>
               <text class="dg-s" x="308" y="98" text-anchor="middle"
-                    style="fill:var(--clear)">one artifact jzz3Ku7c… — both rows</text>
+                    style="fill:var(--clear)" id="artt"></text>
             </g>
           </svg>
         </div>
@@ -268,6 +268,7 @@
       </div>
     </div>
   </section>
+
 
 
 
@@ -390,7 +391,9 @@ async function load(){
     return;
   }
   if (!r.ok) throw new Error('the status API returned ' + r.status);
-  render(await r.json());
+  LIVE = await r.json();
+  render(LIVE);
+  paintFlow();
 }
 
 function showGate(msg){
@@ -416,7 +419,7 @@ const STEPS = [
   {n:"Deploy to test", d:{prod:0,test:1,hi:"test",art:true}, t:"Deploy to test",
    r:"Phase 2 and 4 — infrastructure as code, deployed by CI, with no long-lived AWS keys. Observability is attached in the same step rather than added afterwards, because a log group created later belongs to nobody.",
    b:"The pipeline proves its identity to AWS and receives credentials that expire within the hour. There is no stored access key. It publishes an immutable version and moves the alias to it. The environment is attached HERE, as configuration — the zip is untouched.",
-   p:"assume role via OIDC — no stored key, nothing to rotate\ntrust limited to one branch and two named environments\npublish version 12   (immutable)\nalias cutReleaseTest:live → 12\n\nconfiguration attached at deploy, never at build:\n  RARC_ENV = test\n\nobservability attached in the SAME template:\n  log group declared WITH retention — left to Lambda it\n  creates one that never expires and no stack owns, so it\n  survives the decommission and keeps billing\n  X-Ray tracing on the stage\n  Datadog-shaped metrics written to the log stream, never a\n  blocking POST from inside the handler\n  reserved concurrency — a release bot must not be able to\n  run a thousand copies of itself"},
+   p:"assume role via OIDC — no stored key, nothing to rotate\ntrust limited to one branch and two named environments\npublish a new immutable version\nmove alias cutReleaseTest:live onto it\n\nconfiguration attached at deploy, never at build:\n  RARC_ENV = test\n\nobservability attached in the SAME template:\n  log group declared WITH retention — left to Lambda it\n  creates one that never expires and no stack owns, so it\n  survives the decommission and keeps billing\n  X-Ray tracing on the stage\n  Datadog-shaped metrics written to the log stream, never a\n  blocking POST from inside the handler\n  reserved concurrency — a release bot must not be able to\n  run a thousand copies of itself"},
 
   {n:"Verify on test", d:{prod:0,test:1,art:true}, t:"Prove it on test — the eight checks",
    r:"Phase 5 — production-readiness validation with evidence. These are the evidence. Each one carries its own reason, so the report reads to someone who is not an engineer.",
@@ -430,18 +433,18 @@ const STEPS = [
 
   {n:"Approval", d:{prod:0,test:1,art:true}, t:"A person approves", gate:true,
    r:"Phase 4 — approval and audit trail. Who approved, which release, and when, all recoverable afterwards.",
-   b:"Two routes. In GitHub a named reviewer clicks approve. Or the Slack button: the click is signature-checked, the clicker is checked against a named list, and every attempt is written down. The chat route is the weaker control and is labelled as such rather than presented as equivalent.",
-   p:'AUDIT {"event":"click",   "run_id":"37840483976","slack_user":"U0C7…KNW"}\nAUDIT {"event":"approved","run_id":"37840483976","detail":"production"}\n\nGitHub records: approved — "Approved from Slack by vamsi.d.atluri"\nan empty approver list permits NOBODY, not everybody'},
+   b:"Two routes. In GitHub a named reviewer clicks approve. Or the Slack button — which does NOT deploy anything: it only tells GitHub a human approved, and GitHub then releases the job that moves the alias. The approve endpoint holds no AWS deploy permission at all.",
+   p:'AUDIT {"event":"click",   "run_id":"37840483976","slack_user":"U0C7…KNW"}\nAUDIT {"event":"approved","run_id":"37840483976","detail":"production"}\n\nthe chain, and note where it STOPS:\n  Slack  → POST /beta/slack/interact\n  API GW → slackApprove lambda\n  lambda → verify signature, check approver, read run id\n  lambda → POST github /actions/runs/{id}/pending_deployments\n  GitHub → releases the held prod job\n  the JOB → assumes the deploy role by OIDC and moves the alias\n\n⚠ the Slack lambda NEVER touches AWS. Its role is logs-only:\n  lambda:UpdateAlias        implicitDeny\n  lambda:UpdateFunctionCode implicitDeny\n  lambda:PublishVersion     implicitDeny\n\nso the worst a forged click could do is release a job that had\nALREADY passed build and test. It cannot deploy anything.'},
 
   {n:"Promote", d:{prod:1,test:1,hi:"prod",art:true}, t:"Promote — no build, because there is nothing to build",
    r:"Phase 4 — the same artifact in both accounts during the parallel run. Any difference between environments would make the comparison meaningless.",
    b:"Production deploys the exact bytes test already validated. There is no compile step, and not as an optimisation — there is nothing environment-specific to compile. The two environments differ only in the configuration attached to them and in which alias the stage points at.",
-   p:"publish version 9\nalias cutRelease:live → 9\n\nartifact      jzz3Ku7c…   cutRelease      ┐ identical\nartifact      jzz3Ku7c…   cutReleaseTest  ┘ bytes\n\nconfiguration RARC_ENV=prod   cutRelease      ┐ the only\nconfiguration RARC_ENV=test   cutReleaseTest  ┘ difference\n\nrouting       stage prod → cutRelease:live\n              stage test → cutReleaseTest:live"},
+   p:"publish the SAME artifact as a prod version\nmove alias cutRelease:live onto it\n\nartifact      jzz3Ku7c…   cutRelease      ┐ identical\nartifact      jzz3Ku7c…   cutReleaseTest  ┘ bytes\n\nconfiguration RARC_ENV=prod   cutRelease      ┐ the only\nconfiguration RARC_ENV=test   cutReleaseTest  ┘ difference\n\nrouting       stage prod → cutRelease:live\n              stage test → cutReleaseTest:live"},
 
   {n:"How it knows", d:{prod:1,test:1,art:true}, t:"What tells it which environment it is",
    r:"Phase 3 — environment configuration and secrets, handled per environment. This is the mechanism that makes that possible without a separate build.",
    b:"Four handoffs carry that decision, and not one of them is the build. CloudFormation writes the environment onto each function. Publishing a version freezes it beside the code. API Gateway's stage variable decides which function and alias a request even reaches. The process reads it at startup, and can also read the alias it was invoked through.",
-   p:"1  CloudFormation       infra/20-lambda.yaml\n     cutRelease           RARC_ENV: prod\n     cutReleaseTest       RARC_ENV: test\n\n2  publish-version      code + those variables frozen as version N\n   update-alias         live → N\n\n3  API Gateway          infra/30-apigw.yaml\n     stage prod           cutFn = cutRelease:live\n     stage test           cutFn = cutReleaseTest:live\n     integration URI      …:function:${stageVariables.cutFn}/invocations\n\n4  at invoke            RARC_ENV  read from the process environment\n                        alias     read from the invoked ARN"},
+   p:"1  CloudFormation       infra/20-lambda.yaml\n     cutRelease           RARC_ENV: prod\n     cutReleaseTest       RARC_ENV: test\n\n2  publish-version      code + those variables frozen as version N\n   update-alias         live → that version\n\n3  API Gateway          infra/30-apigw.yaml\n     stage prod           cutFn = cutRelease:live\n     stage test           cutFn = cutReleaseTest:live\n     integration URI      …:function:${stageVariables.cutFn}/invocations\n\n4  at invoke            RARC_ENV  read from the process environment\n                        alias     read from the invoked ARN"},
 
   {n:"Verify on prod", d:{prod:1,test:1,art:true}, t:"Prove it on production",
    r:"Phase 5 — the acceptance evidence their decommission gate depends on. During the parallel run the same command answers a better question: did both accounts give identical answers?",
@@ -451,7 +454,7 @@ const STEPS = [
   {n:"Rollback", d:{prod:0,test:1,hi:"prod",art:true}, t:"And if it is wrong",
    r:"Phase 6 — the cutover needs a rollback plan. This is it, and it is one command rather than a document.",
    b:"The previous version is still published. Rolling back moves the alias back to it — one command, seconds, nothing rebuilds and no pipeline runs. One honest limit: the ARTIFACT is environment-agnostic, but a published VERSION is not — it freezes configuration alongside the code.",
-   p:"aws lambda update-alias --name live --function-version 8\n\n⚠ THE FINDING WORTH RAISING IN WEEK ONE\n  a version freezes CONFIGURATION too, so rotating a secret\n  invalidates every older version as a rollback target.\n\n  their cutover steps 6, 7 and 8 rotate the secrets — so the\n  rollback plan stops working on the exact day it is needed,\n  and nobody finds out until they reach for it."},
+   p:"aws lambda update-alias --name live --function-version <previous>\n\n⚠ THE FINDING WORTH RAISING IN WEEK ONE\n  a version freezes CONFIGURATION too, so rotating a secret\n  invalidates every older version as a rollback target.\n\n  their cutover steps 6, 7 and 8 rotate the secrets — so the\n  rollback plan stops working on the exact day it is needed,\n  and nobody finds out until they reach for it."},
 ];
 
 let fcur = 0, ftimer = null;
@@ -496,7 +499,26 @@ function paintFlow(){
 
 // The diagram's only job is to show the alias move. Moving it IS the deploy,
 // and moving it back IS the rollback -- so the pointer is the thing to watch.
+// ⚠️ These labels used to be hardcoded (v8/v9, v11/v12) and drifted the moment
+// anything deployed again. They now come from the same FNS rows the table below
+// renders, so the diagram and the table cannot disagree.
+let LIVE = null;   // set by load() from /api/state
+function aliasVersions(){
+  const pair = LIVE && LIVE.pairs && LIVE.pairs.find(p => p.name === "cutRelease");
+  if (!pair) return {prod: 1, test: 1, sha: "…"};
+  return {prod: parseInt(pair.prod.version, 10) || 1,
+          test: parseInt(pair.test.version, 10) || 1,
+          sha:  pair.prod.sha || "…"};
+}
+
 function paintDiagram(d){
+  const v = aliasVersions();
+  document.getElementById("p0t").textContent = "v" + (v.prod - 1);
+  document.getElementById("p1t").textContent = "v" + v.prod;
+  document.getElementById("t0t").textContent = "v" + (v.test - 1);
+  document.getElementById("t1t").textContent = "v" + v.test;
+  document.getElementById("artt").textContent =
+    "one artifact " + v.sha.slice(0, 8) + "… — both rows";
   const X = [244, 344];                       // pointer x for version 0 / 1
   const set = (ptrId, chipIds, idx, moved) => {
     const ptr = document.getElementById(ptrId);
