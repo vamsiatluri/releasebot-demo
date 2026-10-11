@@ -129,6 +129,51 @@
   .live-dot.on{animation:lp-pulse 1.8s ease-in-out infinite}
   @media (prefers-reduced-motion:reduce){.live-dot.on{animation:none}}
 
+  /* changeset, ledger, rollback */
+  .chg{margin-top:14px; padding:12px 14px; border:1px solid var(--rule);
+       border-radius:4px; background:var(--surface-2)}
+  .chg h4{margin:0 0 7px; font-family:var(--mono); font-size:10px; letter-spacing:.1em;
+          text-transform:uppercase; color:var(--muted); font-weight:600}
+  .chg .sum{font-size:13px; color:var(--ink-2)}
+  .chg ul{margin:8px 0 0; padding-left:16px; font-size:12.5px; color:var(--muted)}
+  .chg li{margin:2px 0}
+  .tix{display:flex; flex-wrap:wrap; gap:6px; margin-top:9px}
+  .tix span{font-family:var(--mono); font-size:11px; padding:2px 7px; border-radius:3px;
+            background:var(--signal-soft); color:var(--signal); border:1px solid var(--rule)}
+
+  .rel{width:100%; border-collapse:collapse; font-size:12.5px}
+  .rel th{text-align:left; font-family:var(--mono); font-size:10px; letter-spacing:.09em;
+          text-transform:uppercase; color:var(--muted); font-weight:600;
+          padding:0 10px 7px 0; border-bottom:1px solid var(--rule); white-space:nowrap}
+  .rel td{padding:8px 10px 8px 0; border-bottom:1px solid var(--rule);
+          color:var(--ink-2); vertical-align:top}
+  .rel tr:last-child td{border-bottom:none}
+  .brand{font-family:var(--display); font-weight:600; color:var(--ink); white-space:nowrap}
+  .tag{font-family:var(--mono); font-size:10px; letter-spacing:.05em; text-transform:uppercase;
+       padding:1px 6px; border-radius:3px; border:1px solid var(--rule); color:var(--muted)}
+  .tag.dry{color:var(--warn); border-color:var(--warn)}
+  .tag.prod{color:var(--clear); border-color:var(--clear)}
+
+  .rb{display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(290px,1fr))}
+  .rb-fn{border:1px solid var(--rule); border-radius:4px; background:var(--surface-2); padding:12px 13px}
+  .rb-fn h4{margin:0 0 2px; font-family:var(--mono); font-size:12px; color:var(--ink)}
+  .rb-fn .env{font-family:var(--mono); font-size:10px; letter-spacing:.08em;
+              text-transform:uppercase; color:var(--muted)}
+  .rb-v{display:flex; align-items:baseline; gap:9px; padding:5px 0; font-size:12px;
+        border-top:1px solid var(--rule); margin-top:6px}
+  .rb-v:first-of-type{border-top:none}
+  .rb-v .v{font-family:var(--mono); color:var(--ink-2); min-width:34px;
+           font-variant-numeric:tabular-nums}
+  .rb-v .c{font-family:var(--mono); color:var(--muted); min-width:64px}
+  .rb-v .s{margin-left:auto; font-family:var(--mono); font-size:10px;
+           letter-spacing:.05em; text-transform:uppercase; color:var(--muted); text-align:right}
+  .rb-v.live .v, .rb-v.live .c{color:var(--clear); font-weight:600}
+  .rb-v.live .s{color:var(--clear)}
+  .rb-v.bad{background:var(--blocking-soft); margin:0 -13px; padding:5px 13px}
+  .rb-v.bad .s{color:var(--blocking)}
+  .rb-cmd{margin-top:10px; font-family:var(--mono); font-size:11px; color:var(--muted);
+          overflow-x:auto; white-space:nowrap; padding-bottom:2px}
+
   /* walkthrough */
   .flowwrap{display:grid; grid-template-columns:minmax(200px,236px) 1fr;
             background:var(--surface); border:1px solid var(--rule); border-radius:4px; overflow:hidden}
@@ -246,8 +291,29 @@
           <span class="mono" id="lp-meta"></span>
         </div>
         <div class="lanes" id="lp-lanes"></div>
+        <div id="lp-change"></div>
         <p class="lp-note" id="lp-note"></p>
       </div>
+    </section>
+
+    <section>
+      <div class="sechead">
+        <h2>What ReleaseBot has shipped</h2>
+        <p>One row per cut and per mergeback, written by the function that did the work
+           at the moment it did it — not reconstructed afterwards from Slack.</p>
+      </div>
+      <div class="lp"><div id="rel-body"></div></div>
+    </section>
+
+    <section>
+      <div class="sechead">
+        <h2>Where we can roll back to</h2>
+        <p>Every published version is still there. But a version freezes <em>configuration</em>
+           as well as code, so one published before a secret rotation carries the old secret
+           and cannot start — those are marked, because finding out during an incident is
+           the worst possible time.</p>
+      </div>
+      <div class="lp"><div class="rb" id="rb-body"></div></div>
     </section>
 
     <section>
@@ -492,6 +558,8 @@ async function load(){
   LIVE = await r.json();
   render(LIVE);
   renderRun(LIVE.run);
+  renderReleases(LIVE.releases);
+  renderRollback(LIVE.rollback);
   paintFlow();
   startPolling();
 }
@@ -503,6 +571,89 @@ function showGate(msg){
 }
 
 
+
+
+// ── What is IN this release ──────────────────────────────────────────────────
+function renderChange(ch){
+  if (!ch || ch.error) return "";
+  const tickets = (ch.issues || []).length
+    ? `<div class="tix">${ch.issues.map(t => `<span>${esc(t)}</span>`).join("")}</div>`
+    : `<div class="tix"><span style="background:none;color:var(--muted)">no ticket references
+       in these commits</span></div>`;
+  const list = (ch.messages || []).slice(0, 6)
+    .map(m => `<li>${esc(m)}</li>`).join("");
+  const more = (ch.commits || 0) > 6 ? `<li>…and ${ch.commits - 6} more</li>` : "";
+  return `<div class="chg">
+    <h4>What is in this release</h4>
+    <div class="sum">${ch.commits} commit${ch.commits === 1 ? "" : "s"} since
+      <span class="mono">${esc(ch.base)}</span>, the last commit to reach production.</div>
+    ${tickets}
+    <ul>${list}${more}</ul>
+  </div>`;
+}
+
+// ── The release ledger ───────────────────────────────────────────────────────
+function renderReleases(rows){
+  const el = document.getElementById("rel-body");
+  if (!rows || !rows.length){
+    el.innerHTML = `<p class="lp-note">Nothing recorded yet. A row appears the first time
+      ReleaseBot cuts a branch or opens a mergeback.</p>`;
+    return;
+  }
+  el.innerHTML = `<div style="overflow-x:auto"><table class="rel">
+    <thead><tr>
+      <th>Property</th><th>Release</th><th>What</th><th>Tickets</th>
+      <th>Who</th><th>When</th>
+    </tr></thead><tbody>` +
+    rows.map(r => {
+      const tix = (r.issues || []).length
+        ? r.issues.map(t => `<span class="tag">${esc(t)}</span>`).join(" ")
+        : `<span style="color:var(--muted)">—</span>`;
+      // A dry run that renders identically to a real one turns the ledger into
+      // a thing you cannot trust at a glance, which is the only way anybody
+      // reads it.
+      const flags = (r.dryRun ? `<span class="tag dry">dry run</span> ` : "") +
+        `<span class="tag ${r.env === "prod" ? "prod" : ""}">${esc(r.env)}</span>`;
+      return `<tr>
+        <td class="brand">${esc(r.property || r.repo)}</td>
+        <td><span class="mono">${esc(r.version || "—")}</span><br>${flags}</td>
+        <td>${esc(r.action)} · ${esc(r.commits)} commit${r.commits === 1 ? "" : "s"}
+            ${r.url ? `<br><a href="${esc(r.url)}" target="_blank" rel="noopener">PR</a>` : ""}</td>
+        <td>${tix}</td>
+        <td>${esc(r.actor || "—")}<br><span class="tag">${esc(r.source || "?")}</span></td>
+        <td class="mono" style="white-space:nowrap">${esc((r.at || "").replace("T"," ").slice(0,16))}</td>
+      </tr>`;
+    }).join("") + `</tbody></table></div>`;
+}
+
+// ── Rollback targets ─────────────────────────────────────────────────────────
+function renderRollback(groups){
+  const el = document.getElementById("rb-body");
+  if (!groups || !groups.length){ el.innerHTML = ""; return; }
+  el.innerHTML = groups.map(g => {
+    if (g.error) return `<div class="rb-fn"><h4>${esc(g.function)}</h4>
+      <div class="env">${esc(g.env)} — unreadable: ${esc(g.error)}</div></div>`;
+    const rows = (g.versions || []).slice().reverse().map(v => {
+      const cls = v.live ? "live" : (v.stale ? "bad" : "");
+      const state = v.live ? "live now"
+                  : v.stale ? "cannot start"
+                  : "available";
+      return `<div class="rb-v ${cls}">
+        <span class="v">v${esc(v.version)}</span>
+        <span class="c">${esc(v.commit)}</span>
+        <span class="s">${state}</span></div>`;
+    }).join("");
+    // The command is shown, not run. This page is read-only on purpose: a
+    // dashboard that can move a production alias is a production deploy tool
+    // with a login page, and it would need every control that implies.
+    return `<div class="rb-fn">
+      <h4>${esc(g.function)}</h4>
+      <div class="env">${esc(g.env)} · live on v${esc(g.live)}</div>
+      ${rows}
+      <div class="rb-cmd">scripts/rollback.sh ${esc(g.env)} &lt;commit&gt;</div>
+    </div>`;
+  }).join("");
+}
 
 // ── The pipeline panel ───────────────────────────────────────────────────────
 //
@@ -650,6 +801,11 @@ function renderRun(run){
     (run.stale ? " · cached (GitHub unreachable just now)" : "") +
     (run.url ? ` · <a href="${esc(run.url)}" target="_blank" rel="noopener">on GitHub</a>` : "");
   document.getElementById("live").classList.toggle("on", !run.stale);
+
+  // The changeset belongs with the run, not in its own section: "what is in
+  // this?" is the question a person asks while deciding whether to approve.
+  const chg = document.getElementById("lp-change");
+  if (chg) chg.innerHTML = renderChange(run.change);
 
   note.innerHTML = held
     ? "<strong>Production is untouched.</strong> It stays that way until a named reviewer "

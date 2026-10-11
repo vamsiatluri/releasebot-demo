@@ -5,6 +5,19 @@ Description: >
   immutable version and a rollback is one UpdateAlias call rather than a rebuild.
 
 Parameters:
+  TestDryRun:
+    Type: String
+    Default: '1'
+    AllowedValues: ['0', '1']
+    Description: >
+      Whether the TEST functions simulate their GitHub writes instead of making
+      them. Default on, and deliberately not offered for production.
+
+      A test environment that cuts real branches in a real repository is a test
+      environment that files real work for somebody. Dry run keeps the whole
+      path exercised -- signature check, parse, service, ledger write -- and
+      stops only at the write itself, with every row it records flagged so the
+      record never implies a branch that does not exist.
   ArtifactBucket:     {Type: String}
   CutReleaseKey:      {Type: String, Default: 'releasebot/cutrelease.zip'}
   # ⚠️ These were applied BY HAND and CloudFormation did not know about them.
@@ -193,6 +206,7 @@ Resources:
       Environment:
         Variables:
           RARC_ENV: test
+          RELEASEBOT_DRY_RUN: !Ref TestDryRun
           RARC_CONFIG_URL: !Ref RarcConfigUrl
           DEFAULT_OWNER: !Ref DefaultOwner
           SLACK_CHANNEL: !Ref SlackChannel
@@ -276,6 +290,7 @@ Resources:
       Environment:
         Variables:
           RARC_ENV: test
+          RELEASEBOT_DRY_RUN: !Ref TestDryRun
           RARC_CONFIG_URL: !Ref RarcConfigUrl
           DEFAULT_OWNER: !Ref DefaultOwner
           SLACK_CHANNEL: !Ref SlackChannel

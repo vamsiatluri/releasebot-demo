@@ -10,6 +10,8 @@ package githubclient
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -50,7 +52,23 @@ type PullRequest struct {
 }
 
 // HeadSHA resolves a branch to its tip commit.
+//
+// ⚠️ DRY RUN SHORT-CIRCUITS THE READ TOO, and that was a real bug: only the
+// WRITES were dry-run aware, on the reasonable-sounding grounds that a read is
+// harmless. It meant a dry run still required the target repository to exist
+// and still spent a GitHub API call against it, so a dry run against a
+// repository that is not there failed -- with a timeout, which reads as a
+// network problem rather than as "dry run is not actually dry".
+//
+// A dry run that needs the real thing to be present is not a dry run. The
+// fake SHA is derived from the inputs so it is stable across calls: a cut and
+// the mergeback that follows it agree, which is what makes a dry run useful
+// for exercising the whole path.
 func (c *Client) HeadSHA(ctx context.Context, repo, branch string) (string, error) {
+	if c.DryRun {
+		h := sha1.Sum([]byte(repo + "@" + branch))
+		return hex.EncodeToString(h[:]), nil
+	}
 	var r Ref
 	err := c.do(ctx, http.MethodGet,
 		fmt.Sprintf("/repos/%s/git/ref/heads/%s", repo, branch), nil, &r)
@@ -224,6 +242,13 @@ type Change struct {
 // the former. Reporting len(commits) would silently understate every large
 // release as exactly 250.
 func (c *Client) Compare(ctx context.Context, repo, base, head string) (Change, error) {
+	if c.DryRun {
+		// Shaped like a real answer, and obviously synthetic when it is read
+		// back off a ledger row -- the row is flagged dryRun beside it.
+		return Change{Commits: 3, Messages: []string{
+			"dry run: no changeset was read from GitHub",
+		}}, nil
+	}
 	var out struct {
 		TotalCommits int `json:"total_commits"`
 		Commits      []struct {
