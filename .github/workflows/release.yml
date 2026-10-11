@@ -60,7 +60,7 @@ jobs:
       - name: Unit tests — is each piece of the code correct?
         run: go test ./... -count=1
 
-      - name: Vet
+      - name: Vet — static analysis the compiler does not do
         run: go vet ./...
 
       - name: Behaviour suite vs FAKE Slack/Jira/GitHub — free, no credentials
@@ -78,10 +78,12 @@ jobs:
       - name: Package both Lambdas (linux/amd64, bootstrap at the zip root)
         run: make package
 
-      - id: meta
+      - name: Resolve the commit this release is of
+        id: meta
         run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
-      - id: digest
+      - name: Fingerprint both zips — the identity checked after every deploy
+        id: digest
         # The artifact's identity. Compared against the deployed CodeSha256 after
         # every deploy, in every environment.
         run: |
@@ -120,14 +122,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: {go-version: '1.22', cache: true}
-      - uses: actions/download-artifact@v4
+      - name: Fetch the artifact the build job produced — do NOT rebuild
+        uses: actions/download-artifact@v4
         with:
           name: "releasebot-${{ needs.build.outputs.sha }}"
           path: build
 
       # No AWS key anywhere. The only stored value is a role ARN, which is not a
       # credential -- it is useless without the trust policy naming this repo.
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Ask AWS for temporary credentials — OIDC, no stored key
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -152,7 +156,8 @@ jobs:
           bash scripts/ci-verify-digest.sh cutReleaseTest                   '${{ needs.build.outputs.cut }}'
           bash scripts/ci-verify-digest.sh releaseAutomationMergebackTest   '${{ needs.build.outputs.merge }}'
 
-      - id: url
+      - name: Resolve the test stage's public URL from CloudFormation
+        id: url
         run: |
           set -euo pipefail
           U=$(aws cloudformation describe-stacks --stack-name releasebot-edge \
@@ -168,7 +173,7 @@ jobs:
           go run ./cmd/contracttest -base "${{ steps.url.outputs.base }}/test" -env test \
             -metrics metrics-test.json -summary "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish the result to CloudWatch
+      - name: Publish the test result to CloudWatch
         if: always()
         run: |
           [ -f metrics-test.json ] || exit 0
@@ -231,12 +236,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: {go-version: '1.22', cache: true}
-      - uses: actions/download-artifact@v4
+      - name: Fetch the artifact the build job produced — do NOT rebuild
+        uses: actions/download-artifact@v4
         with:
           name: "releasebot-${{ needs.build.outputs.sha }}"
           path: build
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Ask AWS for temporary credentials — OIDC, no stored key
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -264,7 +271,7 @@ jobs:
           go run ./cmd/contracttest -base "$U" -env prod \
             -metrics metrics-prod.json -summary "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish the result to CloudWatch
+      - name: Publish the production result to CloudWatch
         if: always()
         run: |
           [ -f metrics-prod.json ] || exit 0
