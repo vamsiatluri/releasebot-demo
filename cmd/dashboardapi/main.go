@@ -51,11 +51,26 @@ type health struct {
 	Error  string `json:"error,omitempty"`
 }
 
-// A job as GitHub reports it, plus where it sits in the release story.
-type jobState struct {
+// A step inside a job. This is the detail GitHub's own run page shows only
+// after you click into a job -- surfacing it on one screen is the point of the
+// dashboard: somebody watching a release should not have to navigate to learn
+// which of eleven steps is the slow one.
+type stepState struct {
 	Name       string `json:"name"`
+	Number     int    `json:"number"`
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion"`
+	Seconds    int    `json:"seconds"` // elapsed; 0 while queued
+}
+
+// A job as GitHub reports it, plus where it sits in the release story.
+type jobState struct {
+	Name       string      `json:"name"`
+	Status     string      `json:"status"`
+	Conclusion string      `json:"conclusion"`
+	Seconds    int         `json:"seconds"`
+	URL        string      `json:"url"`
+	Steps      []stepState `json:"steps"`
 }
 
 type runState struct {
@@ -379,17 +394,65 @@ func readRun(ctx context.Context) *runState {
 
 	var jobs struct {
 		Jobs []struct {
-			Name       string `json:"name"`
-			Status     string `json:"status"`
-			Conclusion string `json:"conclusion"`
+			Name        string `json:"name"`
+			Status      string `json:"status"`
+			Conclusion  string `json:"conclusion"`
+			HTMLURL     string `json:"html_url"`
+			StartedAt   string `json:"started_at"`
+			CompletedAt string `json:"completed_at"`
+			Steps       []struct {
+				Name        string `json:"name"`
+				Number      int    `json:"number"`
+				Status      string `json:"status"`
+				Conclusion  string `json:"conclusion"`
+				StartedAt   string `json:"started_at"`
+				CompletedAt string `json:"completed_at"`
+			} `json:"steps"`
 		} `json:"jobs"`
 	}
 	if err := get(fmt.Sprintf("/actions/runs/%d/jobs", r.ID), &jobs); err == nil {
 		for _, j := range jobs.Jobs {
-			st.Jobs = append(st.Jobs, jobState{j.Name, j.Status, j.Conclusion})
+			js := jobState{
+				Name: j.Name, Status: j.Status, Conclusion: j.Conclusion,
+				URL: j.HTMLURL, Seconds: elapsed(j.StartedAt, j.CompletedAt),
+			}
+			for _, sp := range j.Steps {
+				js.Steps = append(js.Steps, stepState{
+					Name: sp.Name, Number: sp.Number,
+					Status: sp.Status, Conclusion: sp.Conclusion,
+					Seconds: elapsed(sp.StartedAt, sp.CompletedAt),
+				})
+			}
+			st.Jobs = append(st.Jobs, js)
 		}
 	}
 	return st
+}
+
+// elapsed returns how long something took, or how long it has been running.
+//
+// ⚠️ A step that has not started has a null started_at, which unmarshals to "".
+// Treating that as the zero time would report 56 years of elapsed time, which
+// is the kind of absurd number a dashboard renders without blinking.
+func elapsed(start, end string) int {
+	if start == "" {
+		return 0
+	}
+	t0, err := time.Parse(time.RFC3339, start)
+	if err != nil {
+		return 0
+	}
+	t1 := time.Now().UTC()
+	if end != "" {
+		if p, err := time.Parse(time.RFC3339, end); err == nil {
+			t1 = p
+		}
+	}
+	d := int(t1.Sub(t0).Seconds())
+	if d < 0 {
+		return 0
+	}
+	return d
 }
 
 func shortSHA(s string) string {

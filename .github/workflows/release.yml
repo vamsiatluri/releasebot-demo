@@ -46,6 +46,7 @@ env:
 jobs:
 
   build:
+    name: 1 · Build once — no AWS credentials
     runs-on: ubuntu-latest
     outputs:
       sha:   ${{ steps.meta.outputs.sha }}
@@ -56,13 +57,13 @@ jobs:
       - uses: actions/setup-go@v5
         with: {go-version: '1.22', cache: true}
 
-      - name: Unit tests
+      - name: Unit tests — is each piece of the code correct?
         run: go test ./... -count=1
 
       - name: Vet
         run: go vet ./...
 
-      - name: Contract suite against the local harness
+      - name: Behaviour suite vs FAKE Slack/Jira/GitHub — free, no credentials
         # Free, no AWS, no credentials. Catches behaviour regressions before
         # anything is deployed anywhere.
         env:
@@ -74,7 +75,7 @@ jobs:
           go run ./cmd/contracttest -base http://localhost:8080 -env local \
             -repo msnbc/news-app-shadow -mutating -summary "$GITHUB_STEP_SUMMARY"
 
-      - name: Package
+      - name: Package both Lambdas (linux/amd64, bootstrap at the zip root)
         run: make package
 
       - id: meta
@@ -93,7 +94,23 @@ jobs:
           path: build/*.zip
           retention-days: 30
 
+      - name: Record the artifact's identity on the run page
+        run: |
+          {
+            echo "### One artifact, built once"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| commit | \`${{ steps.meta.outputs.sha }}\` |"
+            echo "| cutRelease sha256 | \`${{ steps.digest.outputs.cut }}\` |"
+            echo "| mergeback sha256 | \`${{ steps.digest.outputs.merge }}\` |"
+            echo ""
+            echo "Every later \"fingerprint matches\" check on this page compares against these"
+            echo "two values, read back from the running function in AWS."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   test:
+    name: 2 · Deploy to test + verify the deployed bytes
     needs: build
     runs-on: ubuntu-latest
     environment: test
@@ -116,20 +133,20 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: releasebot-test-${{ github.run_id }}
 
-      - name: Confirm which account we are in
+      - name: Which AWS account did OIDC actually put us in?
         run: aws sts get-caller-identity --query Account --output text
 
-      - name: Upload the artifact
+      - name: Stage the artifact in S3 (a handoff, not a trigger)
         run: |
           set -euo pipefail
           B="releasebot-artifacts-$(aws sts get-caller-identity --query Account --output text)"
           aws s3 cp build/cutrelease.zip "s3://$B/releasebot/${{ needs.build.outputs.sha }}/cutrelease.zip"
           aws s3 cp build/mergeback.zip  "s3://$B/releasebot/${{ needs.build.outputs.sha }}/mergeback.zip"
 
-      - name: Deploy to the test functions
+      - name: Deploy BOTH test functions — publish version, move the live alias
         run: bash scripts/ci-deploy.sh test "${{ needs.build.outputs.sha }}"
 
-      - name: Verify the deployed bytes are the bytes we built
+      - name: Read the fingerprint BACK off AWS and compare
         run: |
           set -euo pipefail
           bash scripts/ci-verify-digest.sh cutReleaseTest                   '${{ needs.build.outputs.cut }}'
@@ -143,7 +160,7 @@ jobs:
           [ -n "$U" ] && [ "$U" != "None" ] || { echo "::error::could not resolve the API URL"; exit 1; }
           echo "base=${U%/test}" >> "$GITHUB_OUTPUT"
 
-      - name: Behaviour suite against the deployed test stage
+      - name: Behaviour suite vs the LIVE test endpoint — this is the gate
         env:
           SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
           JIRA_WEBHOOK_SECRET: ${{ secrets.JIRA_WEBHOOK_SECRET }}
@@ -162,6 +179,7 @@ jobs:
   # with the steps, because a notification that says a decision is needed without
   # saying where to make it only moves the question.
   notify-gate:
+    name: 3 · Tell Slack the gate is open
     needs: [build, test]
     runs-on: ubuntu-latest
     steps:
@@ -176,7 +194,22 @@ jobs:
             "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             "${{ github.run_id }}"
 
+      - name: Say on the run page what is being asked, and of whom
+        run: |
+          {
+            echo "### ⏸ Waiting for a person"
+            echo ""
+            echo "Test is running \`${{ needs.build.outputs.sha }}\` and passed its behaviour"
+            echo "suite against the live endpoint. **Production is untouched.**"
+            echo ""
+            echo "It stays untouched until a named reviewer approves — here, or from the"
+            echo "Approve button in Slack. The hold is enforced by the \`production\`"
+            echo "environment's required-reviewer rule, not by a condition in this workflow,"
+            echo "so editing this file cannot route around it."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   prod:
+    name: 4 · Promote the SAME artifact to production
     needs: [build, test]
     runs-on: ubuntu-latest
     # ⏸ THE GATE.
@@ -209,18 +242,18 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: releasebot-prod-${{ github.run_id }}
 
-      - name: Deploy the SAME artifact to the production functions
+      - name: Promote — same bytes, no build step anywhere in this job
         # Note what is absent: no build step. The bytes came from the build job's
         # artifact, which the test job has already exercised end to end.
         run: bash scripts/ci-deploy.sh prod "${{ needs.build.outputs.sha }}"
 
-      - name: Verify the deployed bytes are the bytes we tested
+      - name: Prove production's fingerprint equals test's
         run: |
           set -euo pipefail
           bash scripts/ci-verify-digest.sh cutRelease                  '${{ needs.build.outputs.cut }}'
           bash scripts/ci-verify-digest.sh releaseAutomationMergeback  '${{ needs.build.outputs.merge }}'
 
-      - name: Behaviour suite against the deployed production stage
+      - name: Behaviour suite vs the LIVE production endpoint
         env:
           SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
           JIRA_WEBHOOK_SECRET: ${{ secrets.JIRA_WEBHOOK_SECRET }}
@@ -269,6 +302,7 @@ jobs:
   # good news -- and a quiet channel then looks identical to a healthy one, which
   # is the same failure mode as an alarm that cannot fire.
   notify-failure:
+    name: Report a failed release
     needs: [build, test, notify-gate, prod]
     if: ${{ always() && contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest

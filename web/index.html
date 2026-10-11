@@ -80,22 +80,49 @@
   /* live pipeline */
   .lp{background:var(--surface); border:1px solid var(--rule); border-radius:5px; padding:20px 22px}
   .lp-head{display:flex; flex-wrap:wrap; gap:10px 18px; align-items:baseline;
-           justify-content:space-between; margin-bottom:16px}
+           justify-content:space-between; margin-bottom:18px}
   .lp-head .mono{font-size:12.5px; color:var(--muted)}
-  .lp-steps{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px}
-  .lp-step{border:1px solid var(--rule); border-left:3px solid var(--rule);
-           border-radius:4px; padding:11px 13px; background:var(--surface-2)}
-  .lp-step .nm{font-family:var(--display); font-size:12.5px; font-weight:600; color:var(--ink-2)}
-  .lp-step .st{font-family:var(--mono); font-size:10.5px; letter-spacing:.06em;
-               text-transform:uppercase; margin-top:4px; color:var(--muted)}
-  .lp-step.done{border-left-color:var(--clear)}      .lp-step.done .st{color:var(--clear)}
-  .lp-step.run{border-left-color:var(--signal)}      .lp-step.run .st{color:var(--signal)}
-  .lp-step.wait{border-left-color:var(--warn); background:var(--warn-soft)}
-  .lp-step.wait .st{color:var(--warn)}
-  .lp-step.fail{border-left-color:var(--blocking); background:var(--blocking-soft)}
-  .lp-step.fail .st{color:var(--blocking)}
-  .lp-step.idle{opacity:.55}
-  .lp-note{margin:14px 0 0; font-size:13.5px; color:var(--muted)}
+  .lp-head a{color:var(--signal)}
+
+  /* Four lanes, in pipeline order. They wrap on a narrow screen rather than
+     scrolling sideways -- a release view that needs horizontal scrolling to
+     show the gate is a release view nobody reads on a phone. */
+  .lanes{display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(235px,1fr))}
+  .lane{border:1px solid var(--rule); border-top:3px solid var(--rule);
+        border-radius:4px; background:var(--surface-2); display:flex; flex-direction:column}
+  .lane-h{padding:11px 13px 9px; border-bottom:1px solid var(--rule)}
+  .lane-n{font-family:var(--mono); font-size:10px; letter-spacing:.1em;
+          text-transform:uppercase; color:var(--muted)}
+  .lane-t{font-family:var(--display); font-size:13.5px; font-weight:600;
+          color:var(--ink); margin-top:3px; line-height:1.3}
+  .lane-s{display:flex; justify-content:space-between; align-items:baseline;
+          margin-top:6px; font-family:var(--mono); font-size:10.5px;
+          letter-spacing:.06em; text-transform:uppercase; color:var(--muted)}
+  .lane-steps{list-style:none; margin:0; padding:7px 0; flex:1}
+  .lane-steps li{display:flex; gap:8px; align-items:flex-start;
+                 padding:4px 13px; font-size:12px; line-height:1.35}
+  .lane-steps .gl{flex:0 0 auto; width:11px; text-align:center; font-family:var(--mono);
+                  font-size:11px; color:var(--muted); padding-top:1px}
+  .lane-steps .nm{flex:1; color:var(--ink-2); min-width:0; overflow-wrap:anywhere}
+  .lane-steps .sec{flex:0 0 auto; font-family:var(--mono); font-size:10.5px;
+                   color:var(--muted); font-variant-numeric:tabular-nums}
+  .lane-steps li.run .nm{color:var(--ink); font-weight:600}
+  .lane-steps li.run .gl, .lane-steps li.run .sec{color:var(--signal)}
+  .lane-steps li.done .gl{color:var(--clear)}
+  .lane-steps li.fail .gl, .lane-steps li.fail .nm{color:var(--blocking)}
+  .lane-steps li.idle{opacity:.45}
+  .lane-empty{padding:10px 13px; font-size:12px; color:var(--muted)}
+
+  .lane.done{border-top-color:var(--clear)}   .lane.done .lane-s{color:var(--clear)}
+  .lane.run {border-top-color:var(--signal)}  .lane.run  .lane-s{color:var(--signal)}
+  .lane.fail{border-top-color:var(--blocking)} .lane.fail .lane-s{color:var(--blocking)}
+  .lane.idle{opacity:.6}
+  .lane.wait{border-top-color:var(--warn); background:var(--warn-soft)}
+  .lane.wait .lane-s{color:var(--warn)}
+  .lane.wait .lane-t{color:var(--warn)}
+
+  .lp-note{margin:16px 0 0; font-size:13.5px; color:var(--muted)}
+  .lp-note strong{color:var(--ink-2)}
   .live-dot{display:inline-block; width:7px; height:7px; border-radius:50%;
             background:var(--clear); margin-right:6px; vertical-align:1px}
   @keyframes lp-pulse{0%,100%{opacity:1}50%{opacity:.35}}
@@ -210,7 +237,7 @@
     <section>
       <div class="sechead">
         <h2><span class="live-dot on" id="live"></span>The pipeline, right now</h2>
-        <p>Read live from GitHub every 15 seconds. A commit to <span class="mono">main</span>
+        <p>Every job and every step, read live from GitHub. A commit to <span class="mono">main</span>
            starts this on its own — nobody runs anything.</p>
       </div>
       <div class="lp">
@@ -218,7 +245,7 @@
           <div><strong id="lp-title" style="font-family:var(--display)"></strong></div>
           <span class="mono" id="lp-meta"></span>
         </div>
-        <div class="lp-steps" id="lp-steps"></div>
+        <div class="lanes" id="lp-lanes"></div>
         <p class="lp-note" id="lp-note"></p>
       </div>
     </section>
@@ -478,87 +505,168 @@ function showGate(msg){
 
 
 // ── The pipeline panel ───────────────────────────────────────────────────────
-// GitHub's job states mapped onto the five things a person actually wants to
-// know. A job that has not started yet is "idle", not "failed" -- rendering an
-// unstarted job as a problem is how a dashboard trains people to ignore it.
-const LP = [
-  {job:"build",          nm:"Build once"},
-  {job:"test",           nm:"Deploy + verify test"},
-  {job:"notify-gate",    nm:"Notify Slack"},
-  {job:"__gate__",       nm:"Approval gate"},
-  {job:"prod",           nm:"Promote + verify prod"},
+//
+// Four lanes in pipeline order, each showing its own steps live. GitHub's run
+// page shows this too -- but one job at a time, behind a click. Somebody
+// watching a release wants to know which of eleven steps is the slow one
+// WITHOUT navigating, so the whole thing is on one screen.
+//
+// ⚠️ Lanes are matched on a SUBSTRING of the job's display name, not on
+// equality. The names carry numbering and prose ("2 · Deploy to test + verify
+// the deployed bytes"), and a dashboard that silently renders nothing because
+// somebody improved a job title is worse than one that was never built.
+const LANES = [
+  {key:"build", n:"Step 1", t:"Build once",
+   sub:"No AWS credentials exist in this job."},
+  {key:"test",  n:"Step 2", t:"Deploy to test + verify",
+   sub:"Publish a version, move the live alias, read the fingerprint back."},
+  {key:"gate",  n:"Step 3", t:"Approval gate",
+   sub:"Held by GitHub, not by this pipeline."},
+  {key:"prod",  n:"Step 4", t:"Promote to production",
+   sub:"The same bytes. No build step in this job."},
 ];
 
-function lpClass(j, runStatus){
-  if (!j) return ["idle", "not started"];
-  if (j.status === "completed"){
-    if (j.conclusion === "success")   return ["done", "passed"];
-    if (j.conclusion === "skipped")   return ["idle", "skipped"];
-    if (j.conclusion === "cancelled") return ["idle", "cancelled"];
-    return ["fail", j.conclusion || "failed"];
-  }
-  if (j.status === "waiting") return ["wait", "waiting for a person"];
-  if (j.status === "queued")  return ["run", "queued"];
-  return ["run", "running"];
+// What the dashboard says while a lane has no job yet. Without these a held
+// release renders two empty boxes, which reads as broken rather than as waiting.
+const PENDING = {
+  build: "waiting to start",
+  test:  "waiting on the build",
+  gate:  "opens when test passes",
+  prod:  "starts when a person approves",
+};
+
+function jobFor(run, key){
+  return (run.jobs || []).find(j => (j.name || "").toLowerCase().includes(key));
 }
 
+// A job's state as four words a person can act on. GitHub's own vocabulary
+// ("queued", "waiting", "completed/neutral") does not distinguish "nobody has
+// approved this yet" from "this is stuck", and that is the distinction that
+// matters most on this screen.
+function laneState(job){
+  if (!job)                      return ["idle", "not started"];
+  if (job.status === "waiting")  return ["wait", "waiting for a person"];
+  if (job.status === "queued")   return ["run",  "queued"];
+  if (job.status !== "completed")return ["run",  "running"];
+  switch (job.conclusion){
+    case "success":   return ["done", "passed"];
+    case "skipped":   return ["idle", "skipped"];
+    case "cancelled": return ["idle", "cancelled"];
+    default:          return ["fail", job.conclusion || "failed"];
+  }
+}
+
+function stepState(st){
+  if (!st || st.status === "queued" || st.status === "pending") return ["idle", "·"];
+  if (st.status !== "completed") return ["run", "▶"];
+  if (st.conclusion === "success") return ["done", "✓"];
+  if (st.conclusion === "skipped") return ["idle", "–"];
+  return ["fail", "✕"];
+}
+
+function secs(n){
+  if (!n) return "";
+  return n < 60 ? n + "s" : Math.floor(n/60) + "m " + String(n%60).padStart(2,"0") + "s";
+}
+
+// GitHub prefixes every job with housekeeping steps. They are real, they just
+// are not the release -- hiding them keeps the four lanes to what a reviewer
+// is actually deciding about.
+const NOISE = /^(set up job|complete job|post |checkout|run actions\/|set up go|pre run)/i;
+
 function renderRun(run){
-  const steps = document.getElementById("lp-steps");
+  const lanes = document.getElementById("lp-lanes");
+  const title = document.getElementById("lp-title");
+  const meta  = document.getElementById("lp-meta");
+  const note  = document.getElementById("lp-note");
+
   if (!run){
-    document.getElementById("lp-title").textContent = "No runs yet";
-    document.getElementById("lp-meta").textContent = "";
-    steps.innerHTML = ""; document.getElementById("lp-note").textContent = "";
+    title.textContent = "No runs yet";
+    meta.textContent = ""; lanes.innerHTML = ""; note.textContent = "";
     return;
   }
   if (run.error){
-    document.getElementById("lp-title").textContent = "Pipeline state unavailable";
-    document.getElementById("lp-meta").textContent = run.error;
-    steps.innerHTML = "";
-    document.getElementById("lp-note").textContent =
-      "The environment state above is still read live from AWS \u2014 only this panel is missing.";
+    title.textContent = "Pipeline state unavailable";
+    meta.textContent = run.error;
+    lanes.innerHTML = "";
+    note.textContent = "The environment state below is still read live from AWS — "
+                     + "only this panel is missing.";
     return;
   }
 
-  const byName = {};
-  (run.jobs || []).forEach(j => { byName[j.name] = j; });
-  const prod = byName["prod"];
+  lanes.innerHTML = LANES.map(L => {
+    // The gate is not a job of its own. It is the prod job being HELD, which
+    // GitHub reports as status "waiting" on that job -- so the gate lane and
+    // the prod lane are two readings of the same object.
+    const prod = jobFor(run, "prod");
+    let job = jobFor(run, L.key), body;
 
-  steps.innerHTML = LP.map(sp => {
-    let j = byName[sp.job];
-    if (sp.job === "__gate__"){
-      // The gate is not a job. It is the prod job being held, which GitHub
-      // reports as status "waiting" on that job.
-      j = prod && prod.status === "waiting" ? {status:"waiting"} :
-          prod && prod.status === "completed" ? {status:"completed", conclusion:"success"} : null;
+    if (L.key === "gate"){
+      job = !prod ? null
+          : prod.status === "waiting" ? {status:"waiting"}
+          : prod.status === "completed" && prod.conclusion !== "skipped"
+              ? {status:"completed", conclusion:"success"} : null;
+      const notified = jobFor(run, "slack") || jobFor(run, "notify");
+      body = job && job.status === "waiting"
+        ? `<div class="lane-empty">Production untouched. Approve in GitHub, or from
+             the button in Slack.${notified && notified.conclusion === "success"
+               ? " Slack has been told." : ""}</div>`
+        : job ? `<div class="lane-empty">Approved — the run was released to production.</div>`
+              : `<div class="lane-empty">${esc(PENDING.gate)}</div>`;
+    } else if (L.key === "prod" && prod && prod.status === "waiting"){
+      job = null;
+      body = `<div class="lane-empty">${esc(PENDING.prod)}</div>`;
+    } else if (!job){
+      body = `<div class="lane-empty">${esc(PENDING[L.key])}</div>`;
+    } else {
+      const steps = (job.steps || []).filter(st => !NOISE.test(st.name || ""));
+      body = steps.length
+        ? `<ul class="lane-steps">` + steps.map(st => {
+            const [cls, glyph] = stepState(st);
+            return `<li class="${cls}"><span class="gl">${glyph}</span>` +
+                   `<span class="nm">${esc(st.name)}</span>` +
+                   `<span class="sec">${esc(secs(st.seconds))}</span></li>`;
+          }).join("") + `</ul>`
+        : `<div class="lane-empty">starting…</div>`;
     }
-    if (sp.job === "prod" && prod && prod.status === "waiting") j = null;
-    const [cls, label] = lpClass(j, run.status);
-    return `<div class="lp-step ${cls}"><div class="nm">${esc(sp.nm)}</div>` +
-           `<div class="st">${esc(label)}</div></div>`;
+
+    const [cls, label] = laneState(job);
+    const t = job && job.seconds ? secs(job.seconds) : "";
+    return `<div class="lane ${cls}">
+      <div class="lane-h">
+        <div class="lane-n">${esc(L.n)}</div>
+        <div class="lane-t">${esc(L.t)}</div>
+        <div class="lane-s"><span>${esc(label)}</span><span>${esc(t)}</span></div>
+      </div>${body}</div>`;
   }).join("");
 
-  document.getElementById("lp-title").textContent =
-    "Run #" + run.number + " \u00b7 " + (run.title || run.commit);
-  document.getElementById("lp-meta").textContent =
-    run.commit + " \u00b7 " + (run.actor || "") + " \u00b7 " +
-    (run.conclusion || run.status) +
-    // Said out loud rather than hidden: a panel that silently serves a cached
-    // value while GitHub is rate-limiting it is a panel that lies quietly.
-    (run.stale ? " \u00b7 cached (GitHub unreachable just now)" : "");
+  const prod = jobFor(run, "prod");
+  const held = prod && prod.status === "waiting";
+
+  title.textContent = "Run #" + run.number + " · " + (run.title || run.commit);
+  meta.innerHTML =
+    esc(run.commit) + " · " + esc(run.actor || "") + " · " +
+    esc(run.conclusion || run.status) +
+    (run.stale ? " · cached (GitHub unreachable just now)" : "") +
+    (run.url ? ` · <a href="${esc(run.url)}" target="_blank" rel="noopener">on GitHub</a>` : "");
   document.getElementById("live").classList.toggle("on", !run.stale);
 
-  const held = prod && prod.status === "waiting";
-  document.getElementById("lp-note").textContent = held
-    ? "Production is untouched. It stays that way until a named reviewer approves \u2014 in GitHub, or from the Slack button."
+  note.innerHTML = held
+    ? "<strong>Production is untouched.</strong> It stays that way until a named reviewer "
+    + "approves — in GitHub, or from the Slack button. The hold is enforced by the "
+    + "repository's environment rule, not by a condition in the workflow, so editing the "
+    + "pipeline cannot route around it."
     : run.status === "completed" && run.conclusion === "success"
-      ? "Finished. Production received the exact artifact test validated \u2014 no rebuild."
+      ? "<strong>Finished.</strong> Production received the exact artifact test validated — "
+      + "verified by comparing the fingerprint read back from each running function."
       : "In flight.";
 }
 
+// Poll every 10s. The API caches the GitHub read, so extra tabs cost nothing.
 let POLL = null;
 function startPolling(){
   if (POLL) return;
-  POLL = setInterval(() => { load().catch(() => {}); }, 15000);
+  POLL = setInterval(() => { load().catch(() => {}); }, 10000);
 }
 
 // ── The end-to-end walkthrough ───────────────────────────────────────────────

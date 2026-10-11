@@ -161,14 +161,22 @@ fi
 # pipeline's status from curl. The check fails ONLY on a successful match --
 # which is the most misleading failure a verification step can have. Fetch to a
 # file, then grep the file.
-MARKER='lp-steps'
+#
+# ⚠️ And it compares a HASH, not a marker string. The first version of this
+# check looked for an element id that only the new page had -- which went stale
+# the moment that element was renamed, and then failed a deploy that had
+# actually worked. A verification step whose own correctness depends on being
+# edited alongside the thing it verifies will eventually lie. The hash of the
+# file we uploaded cannot go stale.
+WANT=$(openssl dgst -sha256 -binary "$WORK/index.html" | xxd -p -c 32)
 SERVED="$WORK/served.html"
 for i in $(seq 1 24); do
-  if curl -fsS -o "$SERVED" "$URL" 2>/dev/null && grep -q "$MARKER" "$SERVED"; then
-    echo "✓ the served page is the new one"
-    break
+  if curl -fsS -o "$SERVED" "$URL" 2>/dev/null; then
+    GOT=$(openssl dgst -sha256 -binary "$SERVED" | xxd -p -c 32)
+    if [ "$GOT" = "$WANT" ]; then echo "✓ the served page IS the page we uploaded"; break; fi
   fi
-  [ "$i" = 24 ] && { echo "✗ $URL is still serving a page without '$MARKER'" >&2; exit 1; }
+  [ "$i" = 24 ] && { echo "✗ $URL is serving something other than what we just uploaded" >&2
+                     echo "  want $WANT" >&2; echo "  got  ${GOT:-<unfetchable>}" >&2; exit 1; }
   sleep 10
 done
 
