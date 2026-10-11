@@ -45,7 +45,13 @@ for pair in "${PAIRS[@]}"; do
   # ResourceConflictException. Waiting is not optional.
   aws lambda wait function-updated-v2 --function-name "$FN"
 
-  V=$(aws lambda publish-version --function-name "$FN" --query Version --output text)
+  # ⚠️ The description carries the COMMIT, and it is the only durable link
+  # between a version number and what is in it. Without it, rollback is a
+  # choice between integers: cutRelease v19 and mergeback v17 can be the same
+  # release, and nothing in AWS says so. With it, you roll back to a COMMIT and
+  # each function resolves its own version.
+  V=$(aws lambda publish-version --function-name "$FN" \
+        --description "releasebot $SHA" --query Version --output text)
   aws lambda update-alias --function-name "$FN" --name live --function-version "$V" >/dev/null
   echo "  -> version $V, alias live repointed (was $PREV)"
   summary "| \`$FN\` | $PREV | **$V** | \`aws lambda update-alias --function-name $FN --name live --function-version $PREV\` |"

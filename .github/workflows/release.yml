@@ -34,6 +34,18 @@ on:
       - 'LICENSE'
   workflow_dispatch:
 
+# ⚠️ A run held at the approval gate SURVIVES the next push, and then sits there
+# offering to deploy code that production has already moved past. That happened:
+# #29 was approved and promoted while #28 was still pending on an OLDER commit --
+# one click away from a silent downgrade of production.
+#
+# Newer runs therefore cancel older ones of this workflow, INCLUDING one parked
+# at the gate. The queue is the thing that must not accumulate: two pending
+# approvals is how a gate stops being read and starts being clicked through.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   id-token: write      # required for OIDC. Without it the assume-role fails with

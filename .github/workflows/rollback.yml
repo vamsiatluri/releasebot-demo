@@ -1,0 +1,91 @@
+name: rollback
+
+# Rollback is a RELEASE EVENT, not an incident-response improvisation.
+#
+# Run from the Actions tab: pick an environment and a commit. The run records
+# who asked, what moved, and what the endpoint reported afterwards -- which is
+# the part that is always missing when a rollback is done from somebody's
+# laptop at 2am and reconstructed from memory the next morning.
+#
+# ⚠️ DELIBERATELY NOT GATED BEHIND AN APPROVAL.
+#
+# Deploying new code to production needs a human because nobody has seen it run
+# there. Rolling BACK to a version that was already approved and already ran in
+# production is the opposite case, and an approval queue in front of the thing
+# you reach for during an incident is a control that costs more than it
+# protects. The safety here is different in kind: the target must already be
+# published, its frozen configuration must still match current (so it can
+# actually start), both functions move together, and every step is announced.
+#
+# Rolling FORWARD to a version that was never promoted is refused by the script
+# -- that is a deploy, and deploys have a gate.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Which environment to roll back
+        type: choice
+        options: [test, prod]
+        required: true
+      commit:
+        description: 'Short commit to roll back to (leave blank to LIST targets)'
+        required: false
+        default: ''
+      reason:
+        description: Why (goes into the record and into Slack)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  rollback:
+    name: Move both live aliases back
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ask AWS for temporary credentials — OIDC, no stored key
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: releasebot-rollback-${{ github.run_id }}
+
+      - name: Which AWS account did OIDC actually put us in?
+        run: aws sts get-caller-identity --query Account --output text
+
+      # With no commit this is a DRY RUN that prints every reachable version and
+      # flags the ones whose frozen config no longer matches -- the ones that
+      # would fail at INIT. Running it first is the recommended habit.
+      - name: Roll back — or, with no commit, list what is reachable
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          bash scripts/rollback.sh \
+            "${{ inputs.environment }}" "${{ inputs.commit }}" | tee /tmp/rb.txt
+
+      - name: Record it on the run page
+        if: always()
+        run: |
+          {
+            echo "### Rollback — \`${{ inputs.environment }}\`"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| requested by | @${{ github.actor }} |"
+            echo "| target commit | \`${{ inputs.commit || '(listing only)' }}\` |"
+            echo "| reason | ${{ inputs.reason || '—' }} |"
+            echo ""
+            echo '```'
+            cat /tmp/rb.txt 2>/dev/null || echo "(no output captured)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

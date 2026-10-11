@@ -54,6 +54,18 @@ Commit \`${COMMIT}\`. Production was *not* updated; whatever was live is still l
 
 The rollback path is unchanged: the previous version is still published and the \`live\` alias can be moved back to it in one command."
     ;;
+  rolledback)
+    # A rollback is the one release event that MUST be loud. It happens under
+    # pressure, usually by one person, and it is the change most likely to be
+    # discovered later by somebody who was not told.
+    TEXT=":rewind: *ReleaseBot — production rolled back*
+
+Both functions moved to commit \`${COMMIT}\`, by *${ACTOR}*.
+
+The rollback was pre-flighted: the target version's configuration was compared against current before the alias moved, so it is not carrying a rotated secret. Both aliases were read back and verified, and \`/health\` was checked on the live endpoint.
+
+*Nothing was rebuilt.* This is the same artifact that was previously approved and previously ran in production."
+    ;;
   *)
     echo "unknown status: $STATUS" >&2; exit 2 ;;
 esac
