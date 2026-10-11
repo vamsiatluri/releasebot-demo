@@ -150,12 +150,29 @@ func (c Config) Handle(ctx context.Context, rawBody []byte, signature, timestamp
 			Message: ":warning: that button carried no run id."}
 	}
 
-	if err := c.approve(ctx, runID, in.User.Name); err != nil {
-		audit("approve.failed", in.User.ID, runID, err.Error())
-		return Result{Status: 200, Body: "", ResponseURL: in.ResponseURL,
-			Message: ":x: Could not approve run `" + runID + "`: " + err.Error()}
+	// ⚠️ The DECISION comes from action_id, never from the button's label.
+	// A label is display text; action_id is the contract. Reading intent from
+	// the label means a copy change silently turns Reject into Approve.
+	decision := "approved"
+	verb, past := "approve", "Approved"
+	if in.Actions[0].ActionID == "reject" {
+		decision, verb, past = "rejected", "reject", "Rejected"
 	}
-	audit("approved", in.User.ID, runID, "production")
+
+	if err := c.decide(ctx, runID, in.User.Name, decision); err != nil {
+		audit(verb+".failed", in.User.ID, runID, err.Error())
+		return Result{Status: 200, Body: "", ResponseURL: in.ResponseURL,
+			Message: ":x: Could not " + verb + " run `" + runID + "`: " + err.Error()}
+	}
+	audit(decision, in.User.ID, runID, "production")
+
+	if decision == "rejected" {
+		return Result{Status: 200, Body: "", ResponseURL: in.ResponseURL,
+			Message: fmt.Sprintf(
+				":no_entry_sign: %s by <@%s>. Run `%s` will not reach production, and the "+
+					"queue is now clear.\n_Production is unchanged — whatever was live is still live._",
+				past, in.User.ID, runID)}
+	}
 	return Result{Status: 200, Body: "", ResponseURL: in.ResponseURL,
 		Message: fmt.Sprintf(":white_check_mark: Approved by <@%s>. Run `%s` is deploying to production now.",
 			in.User.ID, runID)}
@@ -170,12 +187,21 @@ func (c Config) permitted(userID string) bool {
 	return false
 }
 
-// approve calls GitHub's pending-deployments API.
-func (c Config) approve(ctx context.Context, runID, who string) error {
+// decide calls GitHub's pending-deployments API with "approved" or "rejected".
+//
+// Rejecting is the same endpoint with a different state, and it matters that
+// it exists: without it the only ways to clear a pending release are to
+// approve it (shipping something you decided against) or to leave it sitting
+// there. A gate with no NO is a gate with one answer.
+func (c Config) decide(ctx context.Context, runID, who, state string) error {
+	comment := "Approved from Slack by " + who
+	if state == "rejected" {
+		comment = "Rejected from Slack by " + who
+	}
 	body, _ := json.Marshal(map[string]any{
 		"environment_ids": []int{c.EnvironmentID},
-		"state":           "approved",
-		"comment":         "Approved from Slack by " + who,
+		"state":           state,
+		"comment":         comment,
 	})
 	u := fmt.Sprintf("%s/repos/%s/%s/actions/runs/%s/pending_deployments",
 		strings.TrimRight(c.GitHubAPI, "/"), c.Owner, c.Repo, runID)

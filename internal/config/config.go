@@ -22,6 +22,12 @@ import (
 
 type Config struct {
 	Env string // RARC_ENV: "prod" | "test"
+
+	// Properties maps a repository to the brand it belongs to, as JSON, e.g.
+	// {"news-app":"NBC News","today-web":"TODAY","telemundo-web":"Telemundo"}.
+	// Configuration rather than code: adding a property is a Parameter Store
+	// write, not a release of the release tool.
+	Properties string
 	// Where the per-environment values actually came from, and the path read.
 	// Reported on /health so a silent fallback to environment variables can
 	// never be invisible -- a degraded config that looks healthy is worse than
@@ -205,6 +211,7 @@ func (c Config) WithParameters(v map[string]string) Config {
 	set(&c.JiraAPI, "jira-api-url")
 	set(&c.DatadogSite, "datadog-site")
 	set(&c.DatadogService, "datadog-service")
+	set(&c.Properties, "properties")
 	if s, ok := v["ack-only"]; ok && strings.TrimSpace(s) != "" {
 		c.AckOnly = strings.EqualFold(strings.TrimSpace(s), "true")
 	}

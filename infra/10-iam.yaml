@@ -231,6 +231,20 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod'
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod/*'
+        - PolicyName: release-ledger
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # WRITE ONLY, and only into this environment's partition. A
+              # release-cutting bot has no reason to read the ledger back, and
+              # a bot that can read every property's release history is a
+              # broader thing than a bot that can append to one.
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/releasebot-ledger'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'dynamodb:LeadingKeys': ['ENV#prod']
         - PolicyName: secrets
           PolicyDocument:
             Version: '2012-10-17'
@@ -280,6 +294,20 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/test'
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/test/*'
+        - PolicyName: release-ledger
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # WRITE ONLY, and only into this environment's partition. A
+              # release-cutting bot has no reason to read the ledger back, and
+              # a bot that can read every property's release history is a
+              # broader thing than a bot that can append to one.
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/releasebot-ledger'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'dynamodb:LeadingKeys': ['ENV#test']
         - PolicyName: secrets
           PolicyDocument:
             Version: '2012-10-17'
@@ -329,6 +357,20 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod'
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod/*'
+        - PolicyName: release-ledger
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # WRITE ONLY, and only into this environment's partition. A
+              # release-cutting bot has no reason to read the ledger back, and
+              # a bot that can read every property's release history is a
+              # broader thing than a bot that can append to one.
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/releasebot-ledger'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'dynamodb:LeadingKeys': ['ENV#prod']
         - PolicyName: secrets
           PolicyDocument:
             Version: '2012-10-17'
@@ -376,6 +418,20 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/test'
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/test/*'
+        - PolicyName: release-ledger
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # WRITE ONLY, and only into this environment's partition. A
+              # release-cutting bot has no reason to read the ledger back, and
+              # a bot that can read every property's release history is a
+              # broader thing than a bot that can append to one.
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/releasebot-ledger'
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'dynamodb:LeadingKeys': ['ENV#test']
         - PolicyName: secrets
           PolicyDocument:
             Version: '2012-10-17'

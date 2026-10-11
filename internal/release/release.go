@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/vamsiatluri/releasebot-migration/internal/githubclient"
+	"github.com/vamsiatluri/releasebot-migration/internal/ledger"
 	"github.com/vamsiatluri/releasebot-migration/internal/obs"
 )
 
@@ -31,6 +32,10 @@ type Command struct {
 	Version string // 5.4.0
 	Actor   string // slack user who asked
 	Channel string
+	// Which door this arrived through. Recorded on the ledger row, because
+	// "a human typed this" and "a Jira transition fired this" are different
+	// facts about a release and only one of them had a person look at it.
+	Source string // slack | jira | api
 }
 
 type CutResult struct {
@@ -54,6 +59,17 @@ type Service struct {
 	Log           *obs.Logger
 	DefaultBranch string
 	BranchPrefix  string
+
+	// ── the release record ──────────────────────────────────────────────────
+	Env        string // prod | test, for the ledger partition
+	Properties string // JSON repo->brand map, from Parameter Store
+	DryRun     bool   // recorded on the row; a row that hides it is a lie
+
+	// Record is injected so the ledger is a dependency, not a hard-wired call.
+	// Nil means "do not record", which is what every unit test and the local
+	// harness want -- and what a function whose role lacks PutItem gets
+	// without the release failing.
+	Record func(ctx context.Context, e ledger.Entry) error
 }
 
 func NewService(gh *githubclient.Client, log *obs.Logger, defaultBranch string) *Service {
@@ -110,6 +126,8 @@ func (s *Service) Cut(ctx context.Context, cmd Command) (CutResult, error) {
 	log.With("sha", sha).With("created", created).Info("cut: release branch ready")
 	log.Count("releasebot.cut.success", 1, "repo:"+cmd.Repo)
 
+	s.record(ctx, log, cmd, "cut", branch, sha, "")
+
 	return CutResult{Repo: cmd.Repo, Branch: branch, SHA: sha, Created: created,
 		BaseBranch: s.DefaultBranch}, nil
 }
@@ -137,6 +155,8 @@ func (s *Service) Mergeback(ctx context.Context, cmd Command) (MergebackResult, 
 		return MergebackResult{}, err
 	}
 	log.With("pr", pr.HTMLURL).With("opened", opened).Info("mergeback: pull request ready")
+
+	s.record(ctx, log, cmd, "mergeback", branch, "", pr.HTMLURL)
 	log.Count("releasebot.mergeback.success", 1, "repo:"+cmd.Repo)
 
 	return MergebackResult{Repo: cmd.Repo, Branch: branch, PRURL: pr.HTMLURL,
@@ -174,4 +194,42 @@ func shortSHA(s string) string {
 		return s[:7]
 	}
 	return s
+}
+
+// record appends one row to the release ledger.
+//
+// ⚠️ IT MUST NEVER FAIL THE RELEASE. The branch is already cut, the PR is
+// already open; failing here would report failure for work that succeeded, and
+// the operator's next move is to run it again. Every error is logged and
+// swallowed -- but logged, because a ledger that silently stops recording is
+// worse than one that was never built.
+func (s *Service) record(ctx context.Context, log *obs.Logger,
+	cmd Command, action, branch, sha, prURL string) {
+
+	if s.Record == nil {
+		return
+	}
+
+	e := ledger.Entry{
+		Env: s.Env, Action: action, Repo: cmd.Repo,
+		Property: ledger.Property(s.Properties, cmd.Repo),
+		Version:  cmd.Version, Branch: branch, SHA: sha,
+		Actor: cmd.Actor, Source: cmd.Source, URL: prURL, DryRun: s.DryRun,
+	}
+
+	// What is IN this release? Asking GitHub for trunk..release-branch is the
+	// only honest answer -- a ticket list assembled from anything else is a
+	// guess. A failure to answer leaves the fields empty rather than
+	// fabricating: an unknown changeset must not render as an empty one.
+	if ch, err := s.GH.Compare(ctx, cmd.Repo, s.DefaultBranch, branch); err == nil {
+		e.Commits = ch.Commits
+		e.Issues = ledger.Issues(append(ch.Messages, cmd.Version)...)
+	} else {
+		log.With("error", err.Error()).Warn("ledger: could not read the changeset")
+	}
+
+	if err := s.Record(ctx, e); err != nil {
+		log.With("error", err.Error()).Warn("ledger: row not written")
+		log.Count("releasebot.ledger.write_failed", 1, "action:"+action)
+	}
 }

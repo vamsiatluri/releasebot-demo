@@ -103,10 +103,26 @@ Resources:
               # GetFunctionConfiguration on "*" would let a compromised page
               # enumerate every function's environment variables in the account.
               - Effect: Allow
-                Action: [lambda:GetFunctionConfiguration]
+                Action:
+                  - lambda:GetFunctionConfiguration
+                  # Needed to answer "where could we roll back to, and would it
+                  # start?" -- the version list, each version's frozen config,
+                  # and where the alias points today.
+                  - lambda:ListVersionsByFunction
+                  - lambda:GetAlias
                 Resource:
                   - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:cutRelease*'
                   - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:releaseAutomationMergeback*'
+        - PolicyName: read-release-ledger
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # READ ONLY. The dashboard renders the release history; it must
+              # never be able to write one. An audit record a viewer can edit
+              # is not an audit record.
+              - Effect: Allow
+                Action: [dynamodb:Query]
+                Resource: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/releasebot-ledger'
 
   ApiFunction:
     Type: AWS::Lambda::Function

@@ -64,6 +64,40 @@ Conditions:
 # should be able to read a GitHub token with branch-write rights on the news org.
 Resources:
 
+  # ── The release ledger ──────────────────────────────────────────────────────
+  # What did we ship, for which property, closing which tickets?
+  #
+  # Today that question is answered by scrolling Slack, and Slack is not a
+  # record: messages are edited, channels are archived, and nobody can answer
+  # "what went out for TODAY last Thursday" six weeks later. CloudWatch logs
+  # hold the facts but expire, and querying them is a Logs Insights job rather
+  # than a page somebody opens.
+  #
+  # One row per cut and per mergeback, written by ReleaseBot itself at the
+  # moment it does the work -- not by the pipeline, and not by a human
+  # afterwards. A record written by the thing that performed the action is the
+  # only kind that cannot drift from what happened.
+  LedgerTable:
+    Type: AWS::DynamoDB::Table
+    # ⛔ Retain. This is an audit record of what shipped to production. A stack
+    # delete that silently takes the release history with it is the behaviour
+    # you discover during the audit, not before it.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: releasebot-ledger
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: pk, AttributeType: S}   # ENV#prod | ENV#test
+        - {AttributeName: sk, AttributeType: S}   # <rfc3339>#<repo>#<action>
+      KeySchema:
+        - {AttributeName: pk, KeyType: HASH}
+        - {AttributeName: sk, KeyType: RANGE}
+      PointInTimeRecoverySpecification: {PointInTimeRecoveryEnabled: true}
+      SSESpecification: {SSEEnabled: true}
+      Tags:
+        - {Key: app, Value: releasebot}
+
   # Log groups are declared, not left to Lambda's implicit creation. An implicit
   # group is created with NEVER EXPIRE retention and is not owned by the stack,
   # so it survives the decommission step and keeps billing for storage on an

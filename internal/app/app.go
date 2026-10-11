@@ -13,6 +13,7 @@ import (
 	"github.com/vamsiatluri/releasebot-migration/internal/config"
 	"github.com/vamsiatluri/releasebot-migration/internal/githubclient"
 	"github.com/vamsiatluri/releasebot-migration/internal/handler"
+	"github.com/vamsiatluri/releasebot-migration/internal/ledger"
 	"github.com/vamsiatluri/releasebot-migration/internal/obs"
 	"github.com/vamsiatluri/releasebot-migration/internal/paramstore"
 	"github.com/vamsiatluri/releasebot-migration/internal/release"
@@ -52,10 +53,17 @@ func Build(ctx context.Context, action handler.Action, alias string, ackOnly boo
 	gh := githubclient.New(cfg.GitHubAPI, cfg.GitHubToken, cfg.DryRun)
 	sl := slackclient.New(cfg.SlackAPI, cfg.SlackToken, cfg.DryRun)
 
+	svc := release.NewService(gh, log, cfg.DefaultBranch)
+	svc.Env, svc.Properties, svc.DryRun = cfg.Env, cfg.Properties, cfg.DryRun
+	// The ledger is injected, not imported into the service. A unit test, the
+	// local harness, and a function whose role lacks PutItem all run with it
+	// nil -- and a nil recorder is a no-op, never a failed release.
+	svc.Record = ledger.Put
+
 	return &handler.Handler{
 		Action:  action,
 		Cfg:     cfg,
-		Svc:     release.NewService(gh, log, cfg.DefaultBranch),
+		Svc:     svc,
 		Slack:   sl,
 		Log:     log,
 		AckOnly: ackOnly,

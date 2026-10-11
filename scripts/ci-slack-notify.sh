@@ -115,6 +115,24 @@ buttons = [{
         "deny":    {"type": "plain_text", "text": "Cancel"},
     },
 }]
+# ── The NO ──────────────────────────────────────────────────────────────────
+# A gate with only an Approve button has one answer. Without a reject, the ways
+# to clear a release you have decided against are: approve it anyway, or leave
+# it pending -- and a pending release nobody intends to ship is how a queue
+# grows until the gate stops being read.
+buttons.append({
+    "type": "button", "action_id": "reject",
+    "text": {"type": "plain_text", "text": "Reject"},
+    "style": "danger", "value": run_id,
+    "confirm": {
+        "title":   {"type": "plain_text", "text": "Reject this release?"},
+        "text":    {"type": "mrkdwn", "text":
+                    "The run ends here and production is unchanged. "
+                    "A new commit starts a new release."},
+        "confirm": {"type": "plain_text", "text": "Reject"},
+        "deny":    {"type": "plain_text", "text": "Keep waiting"},
+    },
+})
 if url:
     buttons.append({
         "type": "button", "action_id": "open",

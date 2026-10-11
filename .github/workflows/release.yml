@@ -245,9 +245,67 @@ jobs:
     # against their account, but enforced by the workflow rather than by GitHub.
     environment: production
     steps:
+      # fetch-depth 0 because the guard below asks a question about HISTORY --
+      # "is this commit behind what is live?" -- and a shallow clone cannot
+      # answer it. `git merge-base --is-ancestor` on a depth-1 checkout fails
+      # with a "not a valid object" error that reads like a bad SHA.
       - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
       - uses: actions/setup-go@v5
         with: {go-version: '1.22', cache: true}
+
+      # ── THE DOWNGRADE GUARD ────────────────────────────────────────────────
+      # An approval is a human decision made at a point in time, and the time
+      # between the decision and the click is unbounded -- a release can sit at
+      # the gate for a day. Meanwhile other releases ship. Approving the old one
+      # then REPLACES NEWER PRODUCTION CODE WITH OLDER CODE, and every check in
+      # this pipeline passes while it happens: the artifact is valid, the
+      # fingerprints match, the behaviour suite is green. It is a correct deploy
+      # of the wrong thing.
+      #
+      # This nearly happened: #29 was approved and promoted while #28 sat
+      # pending on an earlier commit, one click from a silent rollback nobody
+      # asked for.
+      #
+      # A concurrency group makes it unlikely. This makes it IMPOSSIBLE: ask
+      # production what it is actually running, and refuse if this commit is an
+      # ancestor of it. The authority is the deployed endpoint, not a workflow
+      # variable -- same principle as reading the fingerprint back instead of
+      # trusting the deploy call.
+      - name: Refuse to promote a commit that is BEHIND production
+        env:
+          PROD_HEALTH_URL: https://0aohv0kx5k.execute-api.us-east-1.amazonaws.com/prod/beta/health
+          SHA: ${{ needs.build.outputs.sha }}
+        run: |
+          set -uo pipefail
+          # ⚠️ sed, not a multi-line python heredoc. A continuation line inside
+          # a YAML block scalar must stay indented past the block, and a python
+          # snippet whose second line starts at column 1 silently ends the
+          # block -- the workflow then fails to parse with no line number.
+          LIVE=$(curl -fsS --max-time 10 "$PROD_HEALTH_URL" 2>/dev/null \
+                 | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p')
+
+          if [ -z "$LIVE" ]; then
+            # Fail OPEN, loudly. Production being unreachable is a reason to
+            # look, not a reason to block a deploy that might be the fix for it.
+            echo "::warning::could not read production's current commit; the downgrade guard did not run"
+            exit 0
+          fi
+          echo "production is running: $LIVE"
+          echo "this run would promote: $SHA"
+
+          if [ "$LIVE" = "$SHA" ]; then
+            echo "already live — this promotion is a no-op, continuing"
+            exit 0
+          fi
+          if git merge-base --is-ancestor "$SHA" "$LIVE" 2>/dev/null; then
+            echo "::error::REFUSED — $SHA is an ANCESTOR of the live commit $LIVE."
+            echo "::error::Approving this run would replace production with OLDER code."
+            echo "::error::If you intend to go back, use the rollback workflow: it checks that"
+            echo "::error::the target can actually start before moving the alias."
+            exit 1
+          fi
+          echo "✓ $SHA is ahead of production — promotion is a roll FORWARD"
       - name: Fetch the artifact the build job produced — do NOT rebuild
         uses: actions/download-artifact@v4
         with:

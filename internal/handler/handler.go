@@ -130,6 +130,7 @@ func (h *Handler) handleSlack(ctx context.Context, log *obs.Logger,
 	}
 	cmd.Actor = form.Get("user_name")
 	cmd.Channel = form.Get("channel_id")
+	cmd.Source = "slack"
 	responseURL := form.Get("response_url")
 
 	log = log.With("repo", cmd.Repo).With("version", cmd.Version).With("actor", cmd.Actor)
@@ -175,6 +176,7 @@ func (h *Handler) handleJira(ctx context.Context, log *obs.Logger,
 		Repo:    h.Cfg.DefaultOwner + "/" + strings.ToLower(ev.Issue.Fields.Project.Key),
 		Version: version,
 		Actor:   ev.User.DisplayName,
+		Source:  "jira",
 	}
 	log = log.With("issue", ev.Issue.Key).With("version", version)
 

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -203,4 +204,45 @@ func short(sha string) string {
 		return sha[:7]
 	}
 	return sha
+}
+
+// Change is what a release actually contains.
+type Change struct {
+	Commits  int      // how many commits are in the range
+	Messages []string // their first lines, for extracting ticket references
+}
+
+// Compare asks GitHub what is in base..head.
+//
+// This is how a release learns its own contents. Without it a cut announces a
+// branch name and nothing else, and the question every stakeholder actually
+// asks -- "what is IN this release?" -- is answered by somebody reading the
+// commit log by hand.
+//
+// ⚠️ GitHub caps the compare response at 250 commits. `total_commits` is the
+// true count and `commits` is the truncated list, so the count is read from
+// the former. Reporting len(commits) would silently understate every large
+// release as exactly 250.
+func (c *Client) Compare(ctx context.Context, repo, base, head string) (Change, error) {
+	var out struct {
+		TotalCommits int `json:"total_commits"`
+		Commits      []struct {
+			Commit struct {
+				Message string `json:"message"`
+			} `json:"commit"`
+		} `json:"commits"`
+	}
+	path := "/repos/" + repo + "/compare/" + url.PathEscape(base) + "..." + url.PathEscape(head)
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return Change{}, err
+	}
+	ch := Change{Commits: out.TotalCommits}
+	for _, cm := range out.Commits {
+		m := cm.Commit.Message
+		if i := strings.IndexByte(m, '\n'); i >= 0 {
+			m = m[:i]
+		}
+		ch.Messages = append(ch.Messages, m)
+	}
+	return ch, nil
 }

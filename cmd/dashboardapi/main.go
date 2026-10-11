@@ -11,6 +11,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -83,20 +86,72 @@ type runState struct {
 	Conclusion string     `json:"conclusion"`
 	URL        string     `json:"url"`
 	Jobs       []jobState `json:"jobs"`
+	Change     *changeset `json:"change,omitempty"`
 	ReadAt     string     `json:"readAt"`
 	Stale      bool       `json:"stale,omitempty"`
 	Error      string     `json:"error,omitempty"`
 }
 
+// One published version, and whether it is actually reachable as a rollback
+// target. "Published" and "usable" are different facts: a version published
+// before a secret rotation still carries the old secret and dies during INIT.
+type versionState struct {
+	Version   string `json:"version"`
+	Commit    string `json:"commit"`
+	Published string `json:"published"`
+	Live      bool   `json:"live"`
+	Stale     bool   `json:"stale"` // config no longer matches current
+}
+
+type rollbackTargets struct {
+	Function string         `json:"function"`
+	Env      string         `json:"env"`
+	Live     string         `json:"live"`
+	Versions []versionState `json:"versions"`
+	Error    string         `json:"error,omitempty"`
+}
+
+// One thing ReleaseBot did, read back from the ledger it wrote.
+type release struct {
+	At       string   `json:"at"`
+	Env      string   `json:"env"`
+	Action   string   `json:"action"`
+	Repo     string   `json:"repo"`
+	Property string   `json:"property"`
+	Version  string   `json:"version"`
+	Branch   string   `json:"branch"`
+	Actor    string   `json:"actor"`
+	Source   string   `json:"source"`
+	Issues   []string `json:"issues"`
+	Commits  int      `json:"commits"`
+	URL      string   `json:"url"`
+	DryRun   bool     `json:"dryRun"`
+}
+
+// What is in THIS pipeline run, relative to the last one that reached
+// production. Not the same question as the ledger's -- that one is about the
+// releases ReleaseBot cuts for other people; this one is about ReleaseBot's
+// own change.
+type changeset struct {
+	Base     string   `json:"base"`
+	Head     string   `json:"head"`
+	Commits  int      `json:"commits"`
+	Messages []string `json:"messages"`
+	Issues   []string `json:"issues"`
+	Error    string   `json:"error,omitempty"`
+}
+
 type payload struct {
-	Account string    `json:"account"`
-	Region  string    `json:"region"`
-	ReadAt  string    `json:"readAt"`
-	Pairs   []pair    `json:"pairs"`
-	Health  []health  `json:"health"`
-	InSync  bool      `json:"inSync"`
-	Run     *runState `json:"run,omitempty"`
-	Notes   []string  `json:"notes"`
+	Account  string            `json:"account"`
+	Region   string            `json:"region"`
+	ReadAt   string            `json:"readAt"`
+	Pairs    []pair            `json:"pairs"`
+	Health   []health          `json:"health"`
+	InSync   bool              `json:"inSync"`
+	Run      *runState         `json:"run,omitempty"`
+	Rollback []rollbackTargets `json:"rollback,omitempty"`
+	Releases []release         `json:"releases,omitempty"`
+	Notes    []string          `json:"notes"`
 }
 
 func main() {
@@ -179,6 +234,19 @@ func build(ctx context.Context) payload {
 	if r := cachedRun(ctx); r != nil {
 		out.Run = r
 	}
+
+	// Where could we go back to, and which of those targets would actually
+	// start? Read live, because the answer changes every time a secret rotates
+	// and nothing emits an event when it does.
+	for _, fn := range []struct{ name, env string }{
+		{"cutRelease", "prod"}, {"releaseAutomationMergeback", "prod"},
+		{"cutReleaseTest", "test"}, {"releaseAutomationMergebackTest", "test"},
+	} {
+		out.Rollback = append(out.Rollback, readRollback(ctx, fn.name, fn.env))
+	}
+
+	// What ReleaseBot has shipped, for whom, closing what.
+	out.Releases = readLedger(ctx)
 
 	out.InSync = true
 	for _, p := range out.Pairs {
@@ -410,6 +478,8 @@ func readRun(ctx context.Context) *runState {
 			} `json:"steps"`
 		} `json:"jobs"`
 	}
+	st.Change = readChange(ctx, get, r.HeadSHA)
+
 	if err := get(fmt.Sprintf("/actions/runs/%d/jobs", r.ID), &jobs); err == nil {
 		for _, j := range jobs.Jobs {
 			js := jobState{
@@ -455,9 +525,269 @@ func elapsed(start, end string) int {
 	return d
 }
 
+// readRollback lists a function's recent versions and marks the ones that
+// could not start if the alias were moved to them.
+//
+// ⚠️ "Stale" here is decided by comparing the SECRET-BEARING environment keys
+// on the published version against the function's current configuration. The
+// values are never read into the response -- only whether they differ. A
+// dashboard that renders a secret to prove it changed has leaked it.
+func readRollback(ctx context.Context, name, env string) rollbackTargets {
+	rt := rollbackTargets{Function: name, Env: env}
+
+	creds, err := awssig.FromEnvironment()
+	if err != nil {
+		rt.Error = "no credentials"
+		return rt
+	}
+	region := os.Getenv("AWS_REGION")
+	host := "https://lambda." + region + ".amazonaws.com"
+
+	get := func(path string, out any) error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, host+path, nil)
+		if err != nil {
+			return err
+		}
+		awssig.SignGET(req, creds, "lambda", region, time.Now())
+		resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("lambda returned %d", resp.StatusCode)
+		}
+		return json.Unmarshal(raw, out)
+	}
+
+	var alias struct {
+		FunctionVersion string `json:"FunctionVersion"`
+	}
+	if err := get("/2015-03-31/functions/"+url.PathEscape(name)+"/aliases/live", &alias); err != nil {
+		rt.Error = err.Error()
+		return rt
+	}
+	rt.Live = alias.FunctionVersion
+
+	type cfg struct {
+		Version      string                                `json:"Version"`
+		Description  string                                `json:"Description"`
+		LastModified string                                `json:"LastModified"`
+		Environment  struct{ Variables map[string]string } `json:"Environment"`
+	}
+	var list struct {
+		Versions []cfg `json:"Versions"`
+	}
+	if err := get("/2015-03-31/functions/"+url.PathEscape(name)+"/versions?MaxItems=50", &list); err != nil {
+		rt.Error = err.Error()
+		return rt
+	}
+
+	// $LATEST carries the configuration a rollback target is compared against:
+	// it is whatever the template most recently applied, i.e. "current".
+	var current map[string]string
+	for _, v := range list.Versions {
+		if v.Version == "$LATEST" {
+			current = v.Environment.Variables
+		}
+	}
+
+	var pub []cfg
+	for _, v := range list.Versions {
+		if v.Version != "$LATEST" {
+			pub = append(pub, v)
+		}
+	}
+	if len(pub) > 8 {
+		pub = pub[len(pub)-8:]
+	}
+	for _, v := range pub {
+		rt.Versions = append(rt.Versions, versionState{
+			Version:   v.Version,
+			Commit:    commitOf(v.Description),
+			Published: v.LastModified,
+			Live:      v.Version == rt.Live,
+			Stale:     secretsDiffer(current, v.Environment.Variables),
+		})
+	}
+	return rt
+}
+
+// secretKeys are the values whose rotation strands an older version.
+var secretKeys = []string{
+	"GITHUB_TOKEN", "SLACK_TOKEN", "SLACK_SIGNING_SECRET", "JIRA_WEBHOOK_SECRET",
+}
+
+func secretsDiffer(current, frozen map[string]string) bool {
+	if current == nil || frozen == nil {
+		return false // unknown is not the same as stale; do not cry wolf
+	}
+	for _, k := range secretKeys {
+		if current[k] != frozen[k] {
+			return true
+		}
+	}
+	return false
+}
+
+// commitOf reads the commit out of a version description.
+//
+// Only a description this pipeline wrote names a commit. Anything else came
+// from a hand-run or from Lambda, and inventing a commit out of it would print
+// a false record -- an em dash is the honest rendering of "not known".
+func commitOf(desc string) string {
+	const p = "releasebot "
+	if strings.HasPrefix(desc, p) {
+		return strings.TrimSpace(desc[len(p):])
+	}
+	return "\u2014"
+}
+
 func shortSHA(s string) string {
 	if len(s) > 7 {
 		return s[:7]
 	}
 	return s
+}
+
+// ── The release ledger, read back ───────────────────────────────────────────
+
+// readLedger returns the most recent releases across both environments.
+//
+// ⚠️ Query, never Scan. A Scan reads the whole table to return ten rows, and
+// it gets slower every week the product succeeds -- the classic dashboard that
+// is fine at launch and times out at the end of the year.
+func readLedger(ctx context.Context) []release {
+	region := os.Getenv("AWS_REGION")
+	creds, err := awssig.FromEnvironment()
+	if err != nil || region == "" {
+		return nil
+	}
+
+	var all []release
+	for _, env := range []string{"prod", "test"} {
+		body, _ := json.Marshal(map[string]any{
+			"TableName":              "releasebot-ledger",
+			"KeyConditionExpression": "pk = :p",
+			"ExpressionAttributeValues": map[string]any{
+				":p": map[string]any{"S": "ENV#" + env},
+			},
+			// Newest first, and a hard cap: this panel is "what shipped
+			// lately", not an archive browser.
+			"ScanIndexForward": false,
+			"Limit":            12,
+		})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			"https://dynamodb."+region+".amazonaws.com/", bytes.NewReader(body))
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+		req.Header.Set("X-Amz-Target", "DynamoDB_20120810.Query")
+		awssig.Sign(req, body, creds, "dynamodb", region, time.Now())
+
+		resp, err := (&http.Client{Timeout: 4 * time.Second}).Do(req)
+		if err != nil {
+			continue
+		}
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			continue
+		}
+		var out struct {
+			Items []map[string]struct {
+				S    string   `json:"S"`
+				N    string   `json:"N"`
+				BOOL bool     `json:"BOOL"`
+				SS   []string `json:"SS"`
+			} `json:"Items"`
+		}
+		if json.Unmarshal(raw, &out) != nil {
+			continue
+		}
+		for _, it := range out.Items {
+			r := release{
+				At: it["at"].S, Env: env, Action: it["action"].S,
+				Repo: it["repo"].S, Property: it["property"].S,
+				Version: it["version"].S, Branch: it["branch"].S,
+				Actor: it["actor"].S, Source: it["source"].S,
+				Issues: it["issues"].SS, URL: it["url"].S,
+				DryRun: it["dryRun"].BOOL,
+			}
+			fmt.Sscanf(it["commits"].N, "%d", &r.Commits)
+			all = append(all, r)
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].At > all[j].At })
+	if len(all) > 14 {
+		all = all[:14]
+	}
+	return all
+}
+
+// issueKey matches a Jira key. Deliberately strict: a loose pattern turns
+// "UTF-8" and "COVID-19" into ticket references and the release notes stop
+// being worth reading.
+var issueKey = regexp.MustCompile(`\b[A-Z][A-Z0-9]{1,9}-[0-9]{1,6}\b`)
+
+// readChange asks GitHub what is in this run that was not in the last one to
+// reach production.
+//
+// ⚠️ The base is the last run that actually PROMOTED, not the last run that
+// went green. A run can succeed without reaching production -- it can be
+// cancelled at the gate -- and using it as the base would report an empty
+// changeset for a release that contains real work.
+func readChange(ctx context.Context, get func(string, any) error, head string) *changeset {
+	var runs struct {
+		WorkflowRuns []struct {
+			HeadSHA string `json:"head_sha"`
+			Status  string `json:"status"`
+		} `json:"workflow_runs"`
+	}
+	wf := os.Getenv("GITHUB_WORKFLOW_FILE")
+	if err := get("/actions/workflows/"+wf+"/runs?status=success&per_page=10", &runs); err != nil {
+		return &changeset{Head: head, Error: err.Error()}
+	}
+	base := ""
+	for _, r := range runs.WorkflowRuns {
+		if r.HeadSHA != "" && !strings.HasPrefix(r.HeadSHA, head) && head != "" &&
+			!strings.HasPrefix(head, r.HeadSHA[:7]) {
+			base = r.HeadSHA
+			break
+		}
+	}
+	if base == "" {
+		return nil
+	}
+
+	var cmp struct {
+		TotalCommits int `json:"total_commits"`
+		Commits      []struct {
+			Commit struct {
+				Message string `json:"message"`
+			} `json:"commit"`
+		} `json:"commits"`
+	}
+	if err := get("/compare/"+base+"..."+head, &cmp); err != nil {
+		return &changeset{Base: shortSHA(base), Head: head, Error: err.Error()}
+	}
+	ch := &changeset{Base: shortSHA(base), Head: head, Commits: cmp.TotalCommits}
+	seen := map[string]bool{}
+	for _, c := range cmp.Commits {
+		m := c.Commit.Message
+		if i := strings.IndexByte(m, '\n'); i >= 0 {
+			m = m[:i]
+		}
+		ch.Messages = append(ch.Messages, m)
+		for _, k := range issueKey.FindAllString(m, -1) {
+			if !seen[k] {
+				seen[k] = true
+				ch.Issues = append(ch.Issues, k)
+			}
+		}
+	}
+	sort.Strings(ch.Issues)
+	return ch
 }
