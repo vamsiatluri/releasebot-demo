@@ -27,6 +27,7 @@ repeated shape is **a green result that meant something other than what it said*
 
 | # | What happened | Why | The fix |
 |---|---|---|---|
+| 8a | **A "GitHub timeout" that was not a timeout, and not GitHub.** A prod cut failed with `context deadline exceeded (Client.Timeout exceeded while awaiting headers)` — in **3 milliseconds**. | Same root cause as #8, wearing a disguise. A frozen goroutine resumes in a LATER invocation with its 25-second timer long expired, so the first context-aware call fails instantly and Go words it as a timeout. It is also logged against whichever invocation happened to resume it. | Already fixed by #8. Finding that out cost four wrong theories — NAT, security group, DNS, the HTTP client — each disproved by a throwaway probe. **The duration was the tell: a 15-second timeout that returns in 3ms is not a timeout.** |
 | 8 | **Work started in a goroutine after the response was silently dropped — non-deterministically.** Four `cut` commands recorded; the `mergeback` logged `releasebot starting` and nothing else. | Lambda **freezes the execution environment** the instant the handler returns. The goroutine survives only if the container is reused. Warm worked, cold didn't. | Acknowledge, then **invoke the function again** with `InvocationType: Event`. The job gets its own lifetime. Falls back to inline if the dispatch fails — a slow release beats a lost one. |
 | 9 | **The async invoke returned 403 `InvalidSignatureException`, and IAM said `allowed`.** | The version was in the **path** (`/functions/name:41/invocations`). The colon's percent-encoding doesn't survive the canonical-request step. | Put the version in the **query string** (`?Qualifier=`). |
 | 10 | **A 403 couldn't be diagnosed** because the error body was deliberately not logged. | Correct — an AWS error body names the role ARN. But "403" alone can't distinguish *forbidden* from *badly signed*, and those have different fixes. | Log `X-Amzn-Errortype` — a bare string, safe, and the single most useful fact. |
@@ -100,3 +101,5 @@ rather than to the code.
 > **A deployment pointer and an environment are different things that Lambda spells the same way. Only the second may decide configuration.**
 
 > **Verify at the destination, not at the transport.** The webhook returned 200 the whole time.
+
+> **Read the duration before the error text.** A 15-second timeout that returns in 3 milliseconds is not a timeout — and chasing the word rather than the number cost four wrong theories about the network.
