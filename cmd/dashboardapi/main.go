@@ -394,11 +394,53 @@ var runCache struct {
 	val *runState
 }
 
+// ── Conditional requests ────────────────────────────────────────────────────
+//
+// WHY THIS EXISTS: so the dashboard needs NO GitHub credential at all.
+//
+// The repository is public, so every read here works unauthenticated -- the
+// only thing a token ever bought was headroom, because anonymous reads are
+// capped at 60/hour per egress IP. The dashboard was therefore borrowing the
+// APPROVAL token, a classic PAT with `repo` scope: the power to push to every
+// repository the owner can reach, held by a page that only ever reads.
+//
+// ⚠️ A request that returns 304 Not Modified DOES NOT COUNT against GitHub's
+// rate limit. So caching the ETag and sending If-None-Match makes an idle
+// dashboard cost nothing at all, and a busy one cost only its genuine changes.
+// The over-grant is not reduced, it is removed: there is no credential left to
+// scope wrongly.
+var etags struct {
+	mu sync.Mutex
+	m  map[string]struct{ etag, body string }
+}
+
+func cachedETag(path string) (etag, body string) {
+	etags.mu.Lock()
+	defer etags.mu.Unlock()
+	e := etags.m[path]
+	return e.etag, e.body
+}
+
+func storeETag(path, etag, body string) {
+	if etag == "" {
+		return
+	}
+	etags.mu.Lock()
+	defer etags.mu.Unlock()
+	if etags.m == nil {
+		etags.m = map[string]struct{ etag, body string }{}
+	}
+	etags.m[path] = struct{ etag, body string }{etag, body}
+}
+
 func runTTL() time.Duration {
 	if os.Getenv("GITHUB_TOKEN") != "" {
 		return 10 * time.Second
 	}
-	return 90 * time.Second
+	// Unauthenticated. With conditional requests an unchanged read is free, so
+	// this only bounds how often a CHANGED response can cost us -- 120s keeps
+	// a live run visible while staying well inside 60/hour.
+	return 120 * time.Second
 }
 
 // cachedRun returns the pipeline panel, refreshing it at most once per TTL.
@@ -452,12 +494,26 @@ func readRun(ctx context.Context) *runState {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
 		req.Header.Set("Accept", "application/vnd.github+json")
+		if et, _ := cachedETag(path); et != "" {
+			req.Header.Set("If-None-Match", et)
+		}
 		resp, err := (&http.Client{Timeout: 6 * time.Second}).Do(req)
 		if err != nil {
 			return err
 		}
 		defer resp.Body.Close()
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+
+		// 304: nothing changed, the body is empty, and this request was FREE.
+		if resp.StatusCode == http.StatusNotModified {
+			if _, cached := cachedETag(path); cached != "" {
+				return json.Unmarshal([]byte(cached), out)
+			}
+			return fmt.Errorf("github sent 304 with nothing cached")
+		}
+		if resp.StatusCode == 200 {
+			storeETag(path, resp.Header.Get("ETag"), string(raw))
+		}
 		if resp.StatusCode != 200 {
 			// Never echo the body: a GitHub error names the repo and the token's
 			// owner. Rate limiting is called out by name because "403" on its own

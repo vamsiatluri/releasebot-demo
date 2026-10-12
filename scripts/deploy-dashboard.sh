@@ -67,30 +67,33 @@ GH_OWNER="${GH_SLUG%%/*}"; GH_REPO="${GH_SLUG##*/}"
 [ -n "$GH_OWNER" ] && [ -n "$GH_REPO" ] || { echo "✗ could not read the GitHub slug" >&2; exit 1; }
 echo "pipeline panel reads: $GH_OWNER/$GH_REPO"
 
-# The token is OPTIONAL. The repository is public, so the panel works with no
-# credential at all -- but anonymous reads are capped at 60/hour per egress IP,
-# which a shared Lambda IP can burn through without us making a single call. A
-# token raises that to 5,000/hour and lets the panel refresh every 10s.
+# ⛔ NO TOKEN BY DEFAULT, and that is the fix rather than a limitation.
 #
-# ⚠️ CORRECT credential: a FINE-GRAINED PAT with Actions: READ on this one
-# repository, supplied as RELEASEBOT_DASHBOARD_TOKEN. It cannot approve a
-# deployment, cannot push, and cannot read another repo -- a read-only panel
-# should hold a read-only credential.
+# This page only ever READS a PUBLIC repository. It used to borrow the approval
+# token -- a classic PAT with `repo` scope, i.e. push access to every repository
+# the owner can reach -- purely to escape GitHub's 60/hour anonymous cap. That
+# is an enormous grant for a read-only dashboard, and the deploy announced it on
+# every run precisely because nobody should get used to it.
 #
-# Fallback, so the panel is not dead on arrival: reuse the approval token that
-# is already in the account. That token is a CLASSIC PAT with `repo`, which is
-# far more than this function needs. It is a stopgap, it is deliberately
-# announced below, and it is not the thing to ship.
+# The cap is now handled by CONDITIONAL REQUESTS instead: the API caches each
+# ETag and sends If-None-Match, and a 304 does not count against the limit. An
+# idle dashboard costs nothing; a busy one costs only its real changes. So the
+# over-grant is not reduced, it is GONE -- there is no credential to scope
+# wrongly, nothing to rotate, and nothing to leak.
+#
+# RELEASEBOT_DASHBOARD_TOKEN is still honoured if you want a faster refresh
+# (10s instead of 120s). If you set it, make it a FINE-GRAINED PAT with
+# Actions: Read on this one repository and nothing else.
 TOKEN="${RELEASEBOT_DASHBOARD_TOKEN:-}"
-TOKEN_SOURCE="read-only token supplied"
-if [ -z "$TOKEN" ]; then
-  TOKEN=$(aws lambda get-function-configuration --function-name slackApprove \
-            --region "$REGION" --output text \
-            --query 'Environment.Variables.GITHUB_APPROVAL_TOKEN' 2>/dev/null || true)
-  [ "$TOKEN" = "None" ] && TOKEN=""
-  TOKEN_SOURCE="⚠️  borrowed the approval token (over-privileged; set RELEASEBOT_DASHBOARD_TOKEN)"
+if [ -n "$TOKEN" ]; then
+  case "$TOKEN" in
+    github_pat_*) TOKEN_SOURCE="fine-grained token supplied (read-only, correct)" ;;
+    ghp_*) TOKEN_SOURCE="⚠️  a CLASSIC token was supplied — it carries far more than this page needs" ;;
+    *) TOKEN_SOURCE="token supplied (unrecognised prefix)" ;;
+  esac
+else
+  TOKEN_SOURCE="no credential — public repo + conditional requests"
 fi
-[ -n "$TOKEN" ] || TOKEN_SOURCE="no token: panel refreshes every 90s and may hit GitHub's anonymous cap"
 
 # ── 3. Infrastructure ────────────────────────────────────────────────────────
 # ⚠️ Parameters go in a FILE, never on the command line. An argument lands in
