@@ -29,7 +29,49 @@ Parameters:
   ThrottleBurstLimit:      {Type: Number, Default: 20}
   AccessLogRetentionDays:  {Type: Number, Default: 30}
 
+  # ── Who may reach PRODUCTION ────────────────────────────────────────────────
+  # Comma-separated CIDRs: Slack's and Atlassian's published egress ranges.
+  # EMPTY = no network restriction, which is the safe default for a template
+  # that somebody will deploy before they have the list. A half-filled
+  # allowlist is worse than none: it locks out the half you forgot and looks
+  # like a broken bot.
+  #
+  # ⚠️ Deliberately applies to /prod ONLY, not /test. The behaviour suite runs
+  # from GitHub-hosted runners, whose egress ranges are enormous and change
+  # weekly. Allowlisting the whole API would stop CI being able to test the
+  # thing it just deployed -- so the environment that is exercised by robots
+  # stays open and the environment that serves real releases is restricted.
+  ProdAllowedCidrs:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: CIDRs permitted to invoke the prod stage. Empty = unrestricted.
+
+  # ⚠️⚠️ BUMP THIS WHENEVER ProdAllowedCidrs CHANGES.
+  #
+  # A REST API resource policy does NOT take effect until the stage is
+  # REDEPLOYED, and CloudFormation only creates a new AWS::ApiGateway::Deployment
+  # when something about the resource changes -- which a policy edit is not. So
+  # the stack updates, the policy is visibly attached to the API, and the old
+  # rules keep being enforced. It cost a round of debugging here: an allowlist
+  # that excluded us returned 200 and looked like a broken condition.
+  #
+  # ⚠️ And even after a redeploy it takes 20-30 SECONDS to propagate. A probe
+  # 6 seconds later reports the OLD behaviour, which reads as "the policy does
+  # not work" rather than "the policy is not live yet".
+  DeploymentNonce:
+    Type: String
+    Default: '1'
+    Description: Change to force a new API deployment (required after a policy edit).
+
+  # Requests per 5 minutes from one IP before WAF blocks it. This is ABUSE
+  # protection, not rate limiting: a newsroom cutting releases makes a handful
+  # of requests an hour, so anything near this number is not a person.
+  WafRateLimitPer5Min:     {Type: Number, Default: 300}
+  EnableWaf:               {Type: String, Default: 'true', AllowedValues: ['true','false']}
+
 Conditions:
+  RestrictProd: !Not [!Equals [!Join ['', !Ref ProdAllowedCidrs], '']]
+  WafOn: !Equals [!Ref EnableWaf, 'true']
   HasDomain: !And
     - !Not [!Equals [!Ref DomainName, '']]
     - !Not [!Equals [!Ref CertificateArn, '']]
@@ -45,6 +87,37 @@ Resources:
       # Slack posts form-encoded text; leaving binary media types unset means
       # API Gateway delivers it as a plain string and the HMAC is computed over
       # exactly the bytes Slack signed.
+      #
+      # ── The resource policy ─────────────────────────────────────────────────
+      # Defence in depth, NOT the authentication. The HMAC is what proves a
+      # request is from Slack; this decides who may make a request at all.
+      # Without it, anyone on the internet can reach the endpoint and be
+      # rejected -- which costs an invocation and a Lambda cold start BEFORE
+      # the signature is ever checked.
+      #
+      # ⚠️ The DENY is scoped to the `prod` stage in the resource ARN. A REST
+      # API has ONE resource policy for the whole API, so the per-stage split
+      # has to be expressed in the Resource element, not by having two policies.
+      #
+      # ⚠️ And an explicit Deny beats any Allow, which is exactly what is
+      # wanted: there is no later statement, condition or misconfiguration that
+      # can re-permit a blocked source.
+      Policy: !If
+        - RestrictProd
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal: '*'
+              Action: execute-api:Invoke
+              Resource: !Sub 'execute-api:/*'
+            - Effect: Deny
+              Principal: '*'
+              Action: execute-api:Invoke
+              Resource: !Sub 'execute-api:/prod/*'
+              Condition:
+                NotIpAddress:
+                  'aws:SourceIp': !Ref ProdAllowedCidrs
+        - !Ref 'AWS::NoValue'
 
   BetaResource:
     Type: AWS::ApiGateway::Resource
@@ -119,6 +192,10 @@ Resources:
     DependsOn: [CutMethod, MergeMethod, HealthMethod]
     Properties:
       RestApiId: !Ref Api
+      # The nonce is in the Description purely so that changing it changes this
+      # resource, which is what makes CloudFormation create a NEW deployment.
+      # See DeploymentNonce above for why that is not optional.
+      Description: !Sub 'releasebot deployment ${DeploymentNonce}'
 
   AccessLogGroup:
     Type: AWS::Logs::LogGroup
@@ -252,6 +329,52 @@ Resources:
       RestApiId: !Ref Api
       Stage: test
       BasePath: beta-test
+
+  # ── Abuse protection ────────────────────────────────────────────────────────
+  # A rate-based rule, not a rate LIMIT. A newsroom cutting releases makes a
+  # handful of requests an hour; anything approaching this number is not a
+  # person, and the stage's own throttle (10 rps) protects the backend but
+  # still spends an invocation per request. WAF rejects before API Gateway
+  # routes, so a flood costs nothing downstream.
+  #
+  # The managed rule sets are deliberately NOT included: this endpoint takes
+  # form-encoded Slack payloads whose bodies carry arbitrary branch names and
+  # commit messages, and the common rule set false-positives on those. A WAF
+  # that blocks a real release is worse than no WAF.
+  WebAcl:
+    Type: AWS::WAFv2::WebACL
+    Condition: WafOn
+    Properties:
+      Name: releasebot-edge
+      Scope: REGIONAL
+      DefaultAction: {Allow: {}}
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: releasebot-edge
+      Rules:
+        - Name: rate-per-ip
+          Priority: 0
+          Action: {Block: {}}
+          Statement:
+            RateBasedStatement:
+              Limit: !Ref WafRateLimitPer5Min
+              AggregateKeyType: IP
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: releasebot-rate-per-ip
+
+  # ⚠️ Associated to the PROD STAGE, not to the API. A WebACL attaches to a
+  # stage ARN, so test is deliberately left unprotected -- the behaviour suite
+  # hammers it from CI and would trip a rate rule written for humans.
+  WebAclAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Condition: WafOn
+    Properties:
+      ResourceArn: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/restapis/${Api}/stages/prod'
+      WebACLArn: !GetAtt WebAcl.Arn
+    DependsOn: [ProdStage]
 
 Outputs:
   ProdInvokeUrl:
