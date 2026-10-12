@@ -1,0 +1,233 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ReleaseBot - network. A DEDICATED VPC for the release automation, so the
+  functions run on private subnets with no public address of their own.
+
+  ⛔ Deliberately NOT the default VPC. The default VPC has public subnets, an
+  internet gateway and a security group that every account starts with, and
+  nothing in it is attributable to a project. A dedicated VPC makes "what can
+  this reach" a question with an answer.
+
+  ⚠️ WHAT THIS DOES AND DOES NOT CHANGE. Attaching Lambda to a VPC does NOT
+  make the API private -- API Gateway is a managed regional service with a
+  public DNS name and it is unaffected by anything in here. Those are two
+  separate decisions, and conflating them is the most common mistake in this
+  conversation. This template governs what the FUNCTIONS can reach outbound;
+  the resource policy and WAF in 30-apigw.yaml govern who can reach the API.
+
+Parameters:
+  VpcCidr:        {Type: String, Default: '10.80.0.0/16'}
+  PublicSubnetCidr:  {Type: String, Default: '10.80.0.0/24'}
+  PrivateSubnetACidr: {Type: String, Default: '10.80.1.0/24'}
+  PrivateSubnetBCidr: {Type: String, Default: '10.80.2.0/24'}
+  CreateNatGateway:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: >
+      A NAT Gateway is the only way these private subnets reach the public
+      internet, which ReleaseBot needs for api.github.com and slack.com.
+
+      ⚠️ It is also the expensive line on the bill (~$32/month plus data
+      transfer) and it is the first thing to turn off when this is idle. With
+      it false the functions still work for everything that goes through a VPC
+      endpoint -- Parameter Store, DynamoDB, Lambda self-invoke -- and fail only
+      on calls that leave AWS. In dry run that is nothing at all.
+
+Conditions:
+  WithNat: !Equals [!Ref CreateNatGateway, 'true']
+
+Resources:
+
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      # ⚠️ BOTH are required for interface endpoints. Without DNS hostnames,
+      # `ssm.us-east-1.amazonaws.com` keeps resolving to the PUBLIC address and
+      # every call quietly leaves through the NAT -- the endpoint is created,
+      # billed, and never used. Nothing errors; the traffic is simply not
+      # private, which is the one thing the endpoint existed to guarantee.
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{Key: Name, Value: releasebot}, {Key: app, Value: releasebot}]
+
+  # ── Private subnets, two AZs ────────────────────────────────────────────────
+  # Two because a Lambda attached to subnets in ONE AZ loses the function when
+  # that AZ has a problem. It costs nothing to span two.
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PrivateSubnetACidr
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags: [{Key: Name, Value: releasebot-private-a}]
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PrivateSubnetBCidr
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags: [{Key: Name, Value: releasebot-private-b}]
+
+  # ── The public subnet exists ONLY to hold the NAT Gateway ───────────────────
+  # Nothing of ours runs in it. A NAT Gateway must live in a subnet with a route
+  # to an internet gateway; the functions never do.
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Condition: WithNat
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PublicSubnetCidr
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags: [{Key: Name, Value: releasebot-public-nat}]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Condition: WithNat
+    Properties:
+      Tags: [{Key: Name, Value: releasebot}]
+
+  IgwAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Condition: WithNat
+    Properties: {VpcId: !Ref Vpc, InternetGatewayId: !Ref InternetGateway}
+
+  NatEip:
+    Type: AWS::EC2::EIP
+    Condition: WithNat
+    DependsOn: IgwAttachment
+    Properties: {Domain: vpc}
+
+  # ONE NAT Gateway, not one per AZ. Two would be the resilient answer and
+  # doubles the most expensive line here; for a release bot that can tolerate
+  # minutes of downtime, one is the honest trade -- and it is written down
+  # rather than left as an accident.
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Condition: WithNat
+    Properties:
+      AllocationId: !GetAtt NatEip.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags: [{Key: Name, Value: releasebot}]
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Condition: WithNat
+    Properties: {VpcId: !Ref Vpc, Tags: [{Key: Name, Value: releasebot-public}]}
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    Condition: WithNat
+    DependsOn: IgwAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: WithNat
+    Properties: {SubnetId: !Ref PublicSubnet, RouteTableId: !Ref PublicRouteTable}
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties: {VpcId: !Ref Vpc, Tags: [{Key: Name, Value: releasebot-private}]}
+
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Condition: WithNat
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnetAAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PrivateSubnetA, RouteTableId: !Ref PrivateRouteTable}
+
+  PrivateSubnetBAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PrivateSubnetB, RouteTableId: !Ref PrivateRouteTable}
+
+  # ── Security groups ─────────────────────────────────────────────────────────
+  # ⚠️ The Lambda group has NO INGRESS RULES AT ALL, and that is correct, not an
+  # omission. Nothing ever connects TO a Lambda: API Gateway invokes it through
+  # the Lambda service, not over the network. A security group written for a web
+  # server here would open a path nothing uses.
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ReleaseBot functions - egress only
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: '0.0.0.0/0',
+           Description: 'HTTPS to AWS endpoints, GitHub and Slack'}
+      Tags: [{Key: Name, Value: releasebot-lambda}]
+
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: VPC interface endpoints - 443 from the functions only
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        # Sourced from the Lambda SG, not from a CIDR. A CIDR would admit
+        # anything that later lands in these subnets; this admits the functions.
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443,
+           SourceSecurityGroupId: !Ref LambdaSecurityGroup}
+      Tags: [{Key: Name, Value: releasebot-endpoints}]
+
+  # ── VPC endpoints: keep AWS traffic off the internet ────────────────────────
+  # Without these, every Parameter Store read and every self-invoke would leave
+  # through the NAT Gateway, cross the public internet to a public AWS endpoint,
+  # and come back -- which is both slower and exactly what a reviewer means when
+  # they ask whether the traffic is private.
+  SsmEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssm'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+
+  LambdaEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.lambda'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+
+  # Gateway endpoints are FREE and are a route-table entry rather than an ENI.
+  # There is no reason not to have them.
+  DynamoDbEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.dynamodb'
+      VpcEndpointType: Gateway
+      RouteTableIds: [!Ref PrivateRouteTable]
+
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      RouteTableIds: [!Ref PrivateRouteTable]
+
+Outputs:
+  VpcId:              {Value: !Ref Vpc}
+  PrivateSubnetIds:   {Value: !Sub '${PrivateSubnetA},${PrivateSubnetB}'}
+  LambdaSecurityGroup: {Value: !Ref LambdaSecurityGroup}
+  NatGatewayId:
+    Condition: WithNat
+    Value: !Ref NatGateway

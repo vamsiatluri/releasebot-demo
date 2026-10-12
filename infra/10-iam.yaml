@@ -210,6 +210,18 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        # ⚠️ Required before a function can be VPC-attached. Lambda creates and
+        # deletes an ENI in the subnet AS THE FUNCTION'S ROLE, so without this
+        # the UpdateFunctionConfiguration call is rejected with
+        # "The provided execution role does not have permissions to call
+        # CreateNetworkInterface on EC2" -- which names the API but not the
+        # managed policy that grants it.
+        #
+        # Granted unconditionally rather than behind a condition: it permits
+        # nothing at all until a VpcConfig exists, and a role that gains
+        # permissions at the same moment it gains a network is two changes to
+        # debug instead of one.
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
       Policies:
         - PolicyName: env-config
           PolicyDocument:
@@ -302,6 +314,18 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        # ⚠️ Required before a function can be VPC-attached. Lambda creates and
+        # deletes an ENI in the subnet AS THE FUNCTION'S ROLE, so without this
+        # the UpdateFunctionConfiguration call is rejected with
+        # "The provided execution role does not have permissions to call
+        # CreateNetworkInterface on EC2" -- which names the API but not the
+        # managed policy that grants it.
+        #
+        # Granted unconditionally rather than behind a condition: it permits
+        # nothing at all until a VpcConfig exists, and a role that gains
+        # permissions at the same moment it gains a network is two changes to
+        # debug instead of one.
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
       Policies:
         - PolicyName: env-config
           PolicyDocument:
@@ -394,6 +418,18 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        # ⚠️ Required before a function can be VPC-attached. Lambda creates and
+        # deletes an ENI in the subnet AS THE FUNCTION'S ROLE, so without this
+        # the UpdateFunctionConfiguration call is rejected with
+        # "The provided execution role does not have permissions to call
+        # CreateNetworkInterface on EC2" -- which names the API but not the
+        # managed policy that grants it.
+        #
+        # Granted unconditionally rather than behind a condition: it permits
+        # nothing at all until a VpcConfig exists, and a role that gains
+        # permissions at the same moment it gains a network is two changes to
+        # debug instead of one.
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
       Policies:
         - PolicyName: env-config
           PolicyDocument:
@@ -484,6 +520,18 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        # ⚠️ Required before a function can be VPC-attached. Lambda creates and
+        # deletes an ENI in the subnet AS THE FUNCTION'S ROLE, so without this
+        # the UpdateFunctionConfiguration call is rejected with
+        # "The provided execution role does not have permissions to call
+        # CreateNetworkInterface on EC2" -- which names the API but not the
+        # managed policy that grants it.
+        #
+        # Granted unconditionally rather than behind a condition: it permits
+        # nothing at all until a VpcConfig exists, and a role that gains
+        # permissions at the same moment it gains a network is two changes to
+        # debug instead of one.
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
       Policies:
         - PolicyName: env-config
           PolicyDocument:

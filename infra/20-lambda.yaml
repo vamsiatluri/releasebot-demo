@@ -5,6 +5,15 @@ Description: >
   immutable version and a rollback is one UpdateAlias call rather than a rebuild.
 
 Parameters:
+  # ── VPC attachment ──────────────────────────────────────────────────────────
+  # Empty = NOT attached, which is the default and the correct default: a
+  # function in a VPC with no route to what it needs is a function that times
+  # out, and the timeout looks like a bug in the code rather than a missing
+  # route. Attachment is a deliberate act with a network behind it.
+  #
+  # Supplied from the outputs of 15-network.yaml.
+  VpcSubnetIds:        {Type: CommaDelimitedList, Default: ''}
+  VpcSecurityGroupIds: {Type: CommaDelimitedList, Default: ''}
   TestDryRun:
     Type: String
     Default: '1'
@@ -68,6 +77,7 @@ Parameters:
       bundled into the migration.
 
 Conditions:
+  InVpc: !Not [!Equals [!Join ['', !Ref VpcSubnetIds], '']]
   HasDatadog:  !Not [!Equals [!Ref DatadogExtensionArn, '']]
   HasAlarms:   !Not [!Equals [!Ref AlarmTopicArn, '']]
 
@@ -196,6 +206,11 @@ Resources:
       # itself. This also caps the blast radius of a retry storm from Jira.
       ReservedConcurrentExecutions: 5
       Layers: !If [HasDatadog, [!Ref DatadogExtensionArn], !Ref 'AWS::NoValue']
+      VpcConfig: !If
+        - InVpc
+        - SubnetIds: !Ref VpcSubnetIds
+          SecurityGroupIds: !Ref VpcSecurityGroupIds
+        - !Ref 'AWS::NoValue'
       Environment:
         Variables:
           RARC_ENV: prod
@@ -243,6 +258,11 @@ Resources:
       Timeout: 30
       ReservedConcurrentExecutions: 2
       Layers: !If [HasDatadog, [!Ref DatadogExtensionArn], !Ref 'AWS::NoValue']
+      VpcConfig: !If
+        - InVpc
+        - SubnetIds: !Ref VpcSubnetIds
+          SecurityGroupIds: !Ref VpcSecurityGroupIds
+        - !Ref 'AWS::NoValue'
       Environment:
         Variables:
           RARC_ENV: test
@@ -286,6 +306,11 @@ Resources:
       Timeout: 30
       ReservedConcurrentExecutions: 5
       Layers: !If [HasDatadog, [!Ref DatadogExtensionArn], !Ref 'AWS::NoValue']
+      VpcConfig: !If
+        - InVpc
+        - SubnetIds: !Ref VpcSubnetIds
+          SecurityGroupIds: !Ref VpcSecurityGroupIds
+        - !Ref 'AWS::NoValue'
       Environment:
         Variables:
           RARC_ENV: prod
@@ -327,6 +352,11 @@ Resources:
       Timeout: 30
       ReservedConcurrentExecutions: 2
       Layers: !If [HasDatadog, [!Ref DatadogExtensionArn], !Ref 'AWS::NoValue']
+      VpcConfig: !If
+        - InVpc
+        - SubnetIds: !Ref VpcSubnetIds
+          SecurityGroupIds: !Ref VpcSecurityGroupIds
+        - !Ref 'AWS::NoValue'
       Environment:
         Variables:
           RARC_ENV: test
