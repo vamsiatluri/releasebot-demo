@@ -58,21 +58,25 @@ func Self(ctx context.Context, payload []byte) error {
 		return err
 	}
 
-	// AWS_LAMBDA_FUNCTION_VERSION is the numeric version when the function was
-	// invoked through an alias, which is how every call here arrives.
+	// ⚠️ THIS TARGETS THE `live` ALIAS, NOT THE EXACT VERSION, AND THAT IS A
+	// DELIBERATE TRADE.
 	//
-	// ⚠️ THE VERSION GOES IN THE QUERY STRING, NOT THE PATH. Lambda accepts
-	// `/functions/<name>:<version>/invocations`, but the colon has to be
-	// percent-encoded in the path and the encoding does not survive the
-	// canonical-request step -- the call comes back 403
-	// InvalidSignatureException, which reads exactly like a broken credential
-	// and sent me looking at IAM first. `?Qualifier=` avoids the colon
-	// altogether and is the form already proven by the dashboard's reader.
+	// Pinning the version is strictly more correct: the job then finishes on
+	// the same code that accepted it. But Lambda attaches an on-failure
+	// DESTINATION to a QUALIFIER -- an alias or $LATEST -- and there is no way
+	// to declare one for "whatever version happens to be running", because
+	// versions are created at deploy time and a template cannot name them.
+	//
+	// So the choice is: close a window of a few milliseconds between the
+	// acknowledgement and the dispatch, during which a deploy could move the
+	// alias -- or have a dead-letter queue for every job that fails its
+	// retries. Without the DLQ a dropped release is SILENT, which is the
+	// failure this whole package exists to stop. The queue wins.
+	//
+	// The accepting version travels in the payload instead, so running on
+	// different code is DETECTED and logged rather than invisible.
 	endpoint := "https://lambda." + region + ".amazonaws.com/2015-03-31/functions/" +
-		url.PathEscape(name) + "/invocations"
-	if v := os.Getenv("AWS_LAMBDA_FUNCTION_VERSION"); v != "" && v != "$LATEST" {
-		endpoint += "?Qualifier=" + url.QueryEscape(v)
-	}
+		url.PathEscape(name) + "/invocations?Qualifier=live"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {

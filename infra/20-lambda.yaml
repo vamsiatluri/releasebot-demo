@@ -77,6 +77,46 @@ Conditions:
 # should be able to read a GitHub token with branch-write rights on the news org.
 Resources:
 
+  # ── Where a dropped async job goes ──────────────────────────────────────────
+  # Lambda retries a failed Event invocation twice and then DISCARDS IT. The
+  # third failure is silent: no error reaches Slack, because the only thing
+  # Slack ever saw was "Working on it...". A release simply never happens and
+  # nobody is told.
+  #
+  # ⚠️ The failures that matter here are the ones our own code CANNOT catch --
+  # a timeout, an INIT failure, a throttle, an out-of-memory kill. A try/catch
+  # inside the handler cannot report any of those, because the handler is what
+  # died. That is why this is a Lambda destination and not error handling.
+  AsyncFailureQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: releasebot-async-failures
+      # 14 days: a release dropped on a Friday must still be there on Monday.
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  # A DLQ nobody looks at is a wastebasket. One message is already too many --
+  # it means a release was accepted and never performed.
+  AsyncFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: releasebot-async-job-dropped
+      AlarmDescription: >
+        A ReleaseBot slash command was acknowledged in Slack and then failed
+        every retry. Someone believes a release was cut and it was not.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - {Name: QueueName, Value: !GetAtt AsyncFailureQueue.QueueName}
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      # An empty queue reports no datapoints rather than zero, and the default
+      # (missing = breaching) would hold this alarm permanently in ALARM.
+      TreatMissingData: notBreaching
+
   # ── The release ledger ──────────────────────────────────────────────────────
   # What did we ship, for which property, closing which tickets?
   #
@@ -379,6 +419,62 @@ Resources:
           MetricName: AuthRejected
           MetricValue: '1'
           DefaultValue: 0
+
+  CutReleaseAsyncConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: cutRelease
+      Qualifier: live
+      # Two retries, then the DLQ. `cut` is idempotent -- a branch that already
+      # exists at the same SHA is treated as success -- so retrying is safe and
+      # a transient GitHub blip should not cost a release.
+      MaximumRetryAttempts: 2
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt AsyncFailureQueue.Arn
+    DependsOn: [CutReleaseAlias]
+
+  CutReleaseTestAsyncConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: cutReleaseTest
+      Qualifier: live
+      # Two retries, then the DLQ. `cut` is idempotent -- a branch that already
+      # exists at the same SHA is treated as success -- so retrying is safe and
+      # a transient GitHub blip should not cost a release.
+      MaximumRetryAttempts: 2
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt AsyncFailureQueue.Arn
+    DependsOn: [CutReleaseTestAlias]
+
+  MergebackAsyncConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: releaseAutomationMergeback
+      Qualifier: live
+      # Two retries, then the DLQ. `cut` is idempotent -- a branch that already
+      # exists at the same SHA is treated as success -- so retrying is safe and
+      # a transient GitHub blip should not cost a release.
+      MaximumRetryAttempts: 2
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt AsyncFailureQueue.Arn
+    DependsOn: [MergebackAlias]
+
+  MergebackTestAsyncConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: releaseAutomationMergebackTest
+      Qualifier: live
+      # Two retries, then the DLQ. `cut` is idempotent -- a branch that already
+      # exists at the same SHA is treated as success -- so retrying is safe and
+      # a transient GitHub blip should not cost a release.
+      MaximumRetryAttempts: 2
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt AsyncFailureQueue.Arn
+    DependsOn: [MergebackTestAlias]
 
 Outputs:
   CutReleaseAliasArn:      {Value: !Ref CutReleaseAlias}

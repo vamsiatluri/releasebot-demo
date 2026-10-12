@@ -231,6 +231,17 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod'
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod/*'
+        - PolicyName: async-failure-destination
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Lambda writes the on-failure destination AS THE FUNCTION, using
+              # this role -- not as a service principal. Without this the
+              # destination silently does nothing, which is the worst possible
+              # outcome for a queue whose entire job is to catch silence.
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !Sub 'arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:releasebot-async-failures'
         - PolicyName: self-invoke
           PolicyDocument:
             Version: '2012-10-17'
@@ -312,6 +323,17 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/test'
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/test/*'
+        - PolicyName: async-failure-destination
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Lambda writes the on-failure destination AS THE FUNCTION, using
+              # this role -- not as a service principal. Without this the
+              # destination silently does nothing, which is the worst possible
+              # outcome for a queue whose entire job is to catch silence.
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !Sub 'arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:releasebot-async-failures'
         - PolicyName: self-invoke
           PolicyDocument:
             Version: '2012-10-17'
@@ -393,6 +415,17 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod'
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod/*'
+        - PolicyName: async-failure-destination
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Lambda writes the on-failure destination AS THE FUNCTION, using
+              # this role -- not as a service principal. Without this the
+              # destination silently does nothing, which is the worst possible
+              # outcome for a queue whose entire job is to catch silence.
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !Sub 'arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:releasebot-async-failures'
         - PolicyName: self-invoke
           PolicyDocument:
             Version: '2012-10-17'
@@ -472,6 +505,17 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/test'
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/test/*'
+        - PolicyName: async-failure-destination
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Lambda writes the on-failure destination AS THE FUNCTION, using
+              # this role -- not as a service principal. Without this the
+              # destination silently does nothing, which is the worst possible
+              # outcome for a queue whose entire job is to catch silence.
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !Sub 'arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:releasebot-async-failures'
         - PolicyName: self-invoke
           PolicyDocument:
             Version: '2012-10-17'

@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -281,6 +282,11 @@ type AsyncJob struct {
 	Action      Action          `json:"action"`
 	Command     release.Command `json:"command"`
 	ResponseURL string          `json:"responseUrl"`
+	// The function version that ACCEPTED the command. The job is dispatched to
+	// the `live` alias (see internal/lambdainvoke), so a deploy landing in the
+	// few milliseconds in between would finish it on different code. Carrying
+	// the version makes that detectable instead of invisible.
+	AcceptedBy string `json:"acceptedBy,omitempty"`
 }
 
 // IsAsyncJob reports whether payload is a self-dispatched job.
@@ -295,6 +301,7 @@ func IsAsyncJob(payload []byte) (AsyncJob, bool) {
 func (h *Handler) dispatch(ctx context.Context, cmd release.Command, responseURL string) error {
 	body, err := json.Marshal(AsyncJob{
 		Marker: true, Action: h.Action, Command: cmd, ResponseURL: responseURL,
+		AcceptedBy: os.Getenv("AWS_LAMBDA_FUNCTION_VERSION"),
 	})
 	if err != nil {
 		return err
@@ -316,6 +323,14 @@ func (h *Handler) HandleAsync(ctx context.Context, j AsyncJob) {
 		With("version", j.Command.Version).
 		With("actor", j.Command.Actor).
 		With("async", "true")
+	if running := os.Getenv("AWS_LAMBDA_FUNCTION_VERSION"); j.AcceptedBy != "" && running != "" &&
+		j.AcceptedBy != running {
+		// Not an error -- the job is still valid and still gets done. But a
+		// deploy landed between the acknowledgement and this invocation, and
+		// that is worth being able to find in a log afterwards.
+		log = log.With("accepted_by_version", j.AcceptedBy).With("running_version", running)
+		log.Warn("async job is finishing on a different version than accepted it")
+	}
 	log.Info("async job received")
 	h.finish(ctx, log, j.Command, j.ResponseURL)
 }
