@@ -86,6 +86,13 @@ func Sign(req *http.Request, body []byte, c Credentials, service, region string,
 	if t := req.Header.Get("X-Amz-Target"); t != "" {
 		hdrs["x-amz-target"] = t
 	}
+	// Lambda's Invoke API carries the sync/async choice in a header. AWS does
+	// not require it to be signed, but an unsigned header is one a proxy could
+	// rewrite -- and rewriting THIS one turns a fire-and-forget into a
+	// synchronous call that blocks the caller against its own concurrency.
+	if t := req.Header.Get("X-Amz-Invocation-Type"); t != "" {
+		hdrs["x-amz-invocation-type"] = t
+	}
 	if ct := req.Header.Get("Content-Type"); ct != "" {
 		hdrs["content-type"] = ct
 	}

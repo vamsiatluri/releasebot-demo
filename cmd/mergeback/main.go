@@ -32,6 +32,23 @@ func main() {
 		if initErr != nil {
 			return nil, fmt.Errorf("initialisation failed: %w", initErr)
 		}
+		// ⚠️ CHECKED FIRST, and on an explicit marker rather than on shape.
+		// A self-dispatched job is not an HTTP event and has no signature on
+		// it -- its authority comes from the IAM policy that allowed the
+		// invoke. Deciding by shape ("it has no `path`, so it must be a job")
+		// would let a malformed proxy event fall through into the branch that
+		// performs a release.
+		if job, ok := handler.IsAsyncJob(payload); ok {
+			if alias := inv.Alias(); alias != "" {
+				h.Cfg = h.Cfg.WithAlias(alias)
+			}
+			h.HandleAsync(ctx, job)
+			// An Event invocation's return value is discarded by Lambda; what
+			// matters is that we do not return until the work is done, because
+			// returning is what freezes the sandbox.
+			return []byte(`{"ok":true}`), nil
+		}
+
 		var req events.APIGatewayProxyRequest
 		if err := json.Unmarshal(payload, &req); err != nil {
 			return nil, fmt.Errorf("payload was not an API Gateway proxy event: %w", err)

@@ -114,6 +114,17 @@ func (c *Client) CreateBranch(ctx context.Context, repo, name, sha string) (crea
 
 // FindOpenPR returns an existing open PR for head->base, or nil.
 func (c *Client) FindOpenPR(ctx context.Context, repo, head, base string) (*PullRequest, error) {
+	// Same rule as HeadSHA: a dry run makes NO call to GitHub, read or write.
+	// Leaving the reads live meant "dry run" still needed the repository to
+	// exist -- the mergeback path failed here while the cut path (already
+	// fixed) succeeded, which is a confusing split to debug.
+	//
+	// nil means "no open PR", which is the answer that makes the caller go on
+	// to the dry-run OpenPR rather than reporting a reused one that is not
+	// there.
+	if c.DryRun {
+		return nil, nil
+	}
 	owner := repo
 	if i := strings.Index(repo, "/"); i > 0 {
 		owner = repo[:i]

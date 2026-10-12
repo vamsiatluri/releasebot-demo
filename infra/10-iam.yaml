@@ -231,6 +231,24 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod'
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod/*'
+        - PolicyName: self-invoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The function may invoke ITSELF and nothing else -- that is the
+              # whole grant. It is how the Slack 3-second acknowledgement is
+              # honoured without losing the work: acknowledge, then dispatch a
+              # real second invocation that has its own lifetime.
+              #
+              # ⚠️ Scoped to this one function name plus its versions and
+              # aliases. `lambda:InvokeFunction` on `*` would let a release bot
+              # invoke every function in the account, which is a far larger
+              # thing than "finish your own job".
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:cutRelease'
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:cutRelease:*'
         - PolicyName: release-ledger
           PolicyDocument:
             Version: '2012-10-17'
@@ -294,6 +312,24 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/test'
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/test/*'
+        - PolicyName: self-invoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The function may invoke ITSELF and nothing else -- that is the
+              # whole grant. It is how the Slack 3-second acknowledgement is
+              # honoured without losing the work: acknowledge, then dispatch a
+              # real second invocation that has its own lifetime.
+              #
+              # ⚠️ Scoped to this one function name plus its versions and
+              # aliases. `lambda:InvokeFunction` on `*` would let a release bot
+              # invoke every function in the account, which is a far larger
+              # thing than "finish your own job".
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:cutReleaseTest'
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:cutReleaseTest:*'
         - PolicyName: release-ledger
           PolicyDocument:
             Version: '2012-10-17'
@@ -357,6 +393,24 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod'
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod/*'
+        - PolicyName: self-invoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The function may invoke ITSELF and nothing else -- that is the
+              # whole grant. It is how the Slack 3-second acknowledgement is
+              # honoured without losing the work: acknowledge, then dispatch a
+              # real second invocation that has its own lifetime.
+              #
+              # ⚠️ Scoped to this one function name plus its versions and
+              # aliases. `lambda:InvokeFunction` on `*` would let a release bot
+              # invoke every function in the account, which is a far larger
+              # thing than "finish your own job".
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:releaseAutomationMergeback'
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:releaseAutomationMergeback:*'
         - PolicyName: release-ledger
           PolicyDocument:
             Version: '2012-10-17'
@@ -418,6 +472,24 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/test'
                   - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/test/*'
+        - PolicyName: self-invoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The function may invoke ITSELF and nothing else -- that is the
+              # whole grant. It is how the Slack 3-second acknowledgement is
+              # honoured without losing the work: acknowledge, then dispatch a
+              # real second invocation that has its own lifetime.
+              #
+              # ⚠️ Scoped to this one function name plus its versions and
+              # aliases. `lambda:InvokeFunction` on `*` would let a release bot
+              # invoke every function in the account, which is a far larger
+              # thing than "finish your own job".
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:releaseAutomationMergebackTest'
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:releaseAutomationMergebackTest:*'
         - PolicyName: release-ledger
           PolicyDocument:
             Version: '2012-10-17'

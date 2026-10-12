@@ -10,6 +10,7 @@ package handler
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -20,6 +21,7 @@ import (
 	"github.com/vamsiatluri/releasebot-migration/internal/config"
 	"github.com/vamsiatluri/releasebot-migration/internal/events"
 	"github.com/vamsiatluri/releasebot-migration/internal/jira"
+	"github.com/vamsiatluri/releasebot-migration/internal/lambdainvoke"
 	"github.com/vamsiatluri/releasebot-migration/internal/obs"
 	"github.com/vamsiatluri/releasebot-migration/internal/release"
 	"github.com/vamsiatluri/releasebot-migration/internal/slackclient"
@@ -136,10 +138,28 @@ func (h *Handler) handleSlack(ctx context.Context, log *obs.Logger,
 	log = log.With("repo", cmd.Repo).With("version", cmd.Version).With("actor", cmd.Actor)
 
 	if h.AckOnly {
-		// Slack hangs up at 3 seconds. Acknowledge now, finish on the
-		// response_url. See DESIGN-PROPOSALS #3 for why the goroutine is a
-		// placeholder for a real async invoke.
-		go h.finish(context.WithoutCancel(ctx), log, cmd, responseURL)
+		// Slack hangs up at 3 seconds. Acknowledge now; the work runs in its
+		// OWN invocation.
+		//
+		// ⚠️ This used to be `go h.finish(...)`, and that is a silent
+		// data-loss bug on Lambda: the sandbox is frozen the instant the
+		// response is returned, so the goroutine survives only if the
+		// container happens to be reused. Warm containers finished the work;
+		// cold ones dropped it and the user kept the "Working on it..."
+		// message forever. See internal/lambdainvoke.
+		if err := h.dispatch(ctx, cmd, responseURL); err != nil {
+			// ⚠️ FALL BACK TO DOING IT INLINE rather than losing the request.
+			// Slack may time out and show its own error, which is bad -- but a
+			// release that silently never happens is worse, and the operator
+			// has no way to tell the two apart from the Slack side.
+			log.With("error", err.Error()).Error("async dispatch failed; running inline")
+			log.Count("releasebot.dispatch.fallback", 1, "action:"+string(h.Action))
+			text, rerr := h.run(ctx, cmd)
+			if rerr != nil {
+				return slackEphemeral(":x: " + rerr.Error())
+			}
+			return slackInChannel(text)
+		}
 		return slackEphemeral(fmt.Sprintf(":hourglass_flowing_sand: Working on `%s %s`...",
 			cmd.Repo, cmd.Version))
 	}
@@ -245,4 +265,57 @@ func rawBody(req events.APIGatewayProxyRequest) ([]byte, error) {
 		return []byte(req.Body), nil
 	}
 	return base64.StdEncoding.DecodeString(req.Body)
+}
+
+// ── Asynchronous follow-up work ─────────────────────────────────────────────
+
+// AsyncJob is the payload this function sends to ITSELF to finish a command
+// after Slack has been acknowledged.
+//
+// The `releasebotAsyncJob` marker is what distinguishes it from an API Gateway
+// event at the entry point. A shape-based guess ("does it have a `path` field?")
+// would be fragile in exactly the direction that matters: a malformed proxy
+// event must never be mistaken for a job that performs a release.
+type AsyncJob struct {
+	Marker      bool            `json:"releasebotAsyncJob"`
+	Action      Action          `json:"action"`
+	Command     release.Command `json:"command"`
+	ResponseURL string          `json:"responseUrl"`
+}
+
+// IsAsyncJob reports whether payload is a self-dispatched job.
+func IsAsyncJob(payload []byte) (AsyncJob, bool) {
+	var j AsyncJob
+	if err := json.Unmarshal(payload, &j); err != nil || !j.Marker {
+		return AsyncJob{}, false
+	}
+	return j, true
+}
+
+func (h *Handler) dispatch(ctx context.Context, cmd release.Command, responseURL string) error {
+	body, err := json.Marshal(AsyncJob{
+		Marker: true, Action: h.Action, Command: cmd, ResponseURL: responseURL,
+	})
+	if err != nil {
+		return err
+	}
+	return lambdainvoke.Self(ctx, body)
+}
+
+// HandleAsync runs the work for a self-dispatched job.
+//
+// ⚠️ The response_url is validated by the Slack client before anything is
+// POSTed to it. This payload arrives over lambda:InvokeFunction rather than
+// through the signature-checked HTTP path, so its contents are only as
+// trustworthy as the IAM policy that permits the invoke -- which is scoped to
+// this function invoking itself and nothing else.
+func (h *Handler) HandleAsync(ctx context.Context, j AsyncJob) {
+	log := h.Log.
+		With("action", string(j.Action)).
+		With("repo", j.Command.Repo).
+		With("version", j.Command.Version).
+		With("actor", j.Command.Actor).
+		With("async", "true")
+	log.Info("async job received")
+	h.finish(ctx, log, j.Command, j.ResponseURL)
 }

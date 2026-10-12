@@ -240,11 +240,27 @@ to be legible.
 The correct shape is ACK immediately, then post the outcome to the
 `response_url`, which stays valid for 30 minutes and 5 uses.
 
-This repo implements that behind `RELEASEBOT_ACK_ONLY`. **The goroutine in
-`handler.finish` is a placeholder, and deliberately a visible one**: in Lambda,
-work started in a goroutine after the handler returns is frozen with the
-execution environment and may never resume. The production shape is an async
-self-invoke (`InvokeAsync`) or an SQS hop with a DLQ.
+This repo implements that behind `RELEASEBOT_ACK_ONLY`, and it is now a real
+async self-invoke (`internal/lambdainvoke`), not a goroutine.
+
+**The goroutine was not merely theoretically wrong — it lost work in this
+account, and it did so non-deterministically.** Lambda freezes the execution
+environment the instant the handler's response is returned, so a goroutine
+still running is suspended and resumes only if that sandbox is reused. Driving
+the deployed test stage: four `cut` commands recorded correctly on a warm
+container while the `mergeback` on a cold one logged `releasebot starting` and
+then nothing. The user's Slack message said "Working on it..." forever.
+
+The shape now is: acknowledge, then `lambda:InvokeFunction` with
+`InvocationType: Event` against **this function's own published version**, so a
+deploy mid-flight cannot finish the job on different code than accepted it. If
+the dispatch fails the work runs inline instead — Slack may then time out and
+show its own error, which is bad, but a release that silently never happens is
+worse and the operator cannot tell the two apart from the Slack side.
+
+⏭ Still open: an on-failure destination (SQS DLQ) for the async invocation.
+Lambda retries an Event invocation twice and then discards it, and `cut` is
+idempotent so the retries are safe — but the third failure is currently silent.
 
 **Against.** If the current bot is synchronous and the team has lived with it,
 this is a behaviour change and belongs behind approval — raise it with the
