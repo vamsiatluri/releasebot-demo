@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,7 +43,12 @@ type fnState struct {
 	Function string `json:"function"`
 	Version  string `json:"version"`
 	SHA      string `json:"sha"`
-	Error    string `json:"error,omitempty"`
+	// Network posture, read from the same call that reads the fingerprint --
+	// "is this function actually on a private subnet" is a question a reviewer
+	// asks and a template cannot answer, because a template describes intent.
+	Vpc     string `json:"vpc,omitempty"`
+	Subnets int    `json:"subnets,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 type health struct {
@@ -141,6 +147,28 @@ type changeset struct {
 	Error    string   `json:"error,omitempty"`
 }
 
+// platform is everything about the system that is NOT a release: the controls
+// around it. A dashboard that only shows versions answers "what is running" and
+// leaves "is it protected" to a conversation.
+type platform struct {
+	DlqDepth   int      `json:"dlqDepth"`
+	DlqError   string   `json:"dlqError,omitempty"`
+	Alarms     []alarm  `json:"alarms,omitempty"`
+	AlarmError string   `json:"alarmError,omitempty"`
+	WafProd    string   `json:"wafProd,omitempty"`
+	WafTest    string   `json:"wafTest,omitempty"`
+	ProdRate   float64  `json:"prodRate,omitempty"`
+	TestRate   float64  `json:"testRate,omitempty"`
+	WafError   string   `json:"wafError,omitempty"`
+	Notes      []string `json:"notes,omitempty"`
+}
+
+type alarm struct {
+	Name   string `json:"name"`
+	State  string `json:"state"`
+	Reason string `json:"reason,omitempty"`
+}
+
 type payload struct {
 	Account  string            `json:"account"`
 	Region   string            `json:"region"`
@@ -151,6 +179,7 @@ type payload struct {
 	Run      *runState         `json:"run,omitempty"`
 	Rollback []rollbackTargets `json:"rollback,omitempty"`
 	Releases []release         `json:"releases,omitempty"`
+	Platform *platform         `json:"platform,omitempty"`
 	Notes    []string          `json:"notes"`
 }
 
@@ -248,6 +277,9 @@ func build(ctx context.Context) payload {
 	// What ReleaseBot has shipped, for whom, closing what.
 	out.Releases = readLedger(ctx)
 
+	// The controls around the release, not the release itself.
+	out.Platform = readPlatform(ctx)
+
 	out.InSync = true
 	for _, p := range out.Pairs {
 		if !p.Same {
@@ -301,12 +333,17 @@ func readFn(ctx context.Context, name string) fnState {
 	var cfg struct {
 		Version    string `json:"Version"`
 		CodeSha256 string `json:"CodeSha256"`
+		VpcConfig  struct {
+			VpcId     string   `json:"VpcId"`
+			SubnetIds []string `json:"SubnetIds"`
+		} `json:"VpcConfig"`
 	}
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		st.Error = "unreadable configuration"
 		return st
 	}
 	st.Version, st.SHA = cfg.Version, cfg.CodeSha256
+	st.Vpc, st.Subnets = cfg.VpcConfig.VpcId, len(cfg.VpcConfig.SubnetIds)
 	return st
 }
 
@@ -790,4 +827,206 @@ func readChange(ctx context.Context, get func(string, any) error, head string) *
 	}
 	sort.Strings(ch.Issues)
 	return ch
+}
+
+// ── The controls, read live ─────────────────────────────────────────────────
+
+// awsJSON signs and sends an AWS-JSON request. Three different AWS services
+// here speak three different dialects, and the dialect is not cosmetic: the
+// wrong Content-Type is rejected with an UnknownOperationException that names
+// neither the operation nor the reason.
+func awsJSON(ctx context.Context, service, host, target, contentType string, body []byte, out any) error {
+	region := os.Getenv("AWS_REGION")
+	creds, err := awssig.FromEnvironment()
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+host+"/", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", contentType)
+	if target != "" {
+		req.Header.Set("X-Amz-Target", target)
+	}
+	awssig.Sign(req, body, creds, service, region, time.Now())
+	resp, err := (&http.Client{Timeout: 4 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != 200 {
+		// Type, never body: an AWS error body names the ARN and the caller.
+		kind := resp.Header.Get("X-Amzn-Errortype")
+		if i := strings.IndexByte(kind, ':'); i > 0 {
+			kind = kind[:i]
+		}
+		return fmt.Errorf("%s returned %d (%s)", service, resp.StatusCode, kind)
+	}
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(raw, out)
+}
+
+// awsGET signs an ordinary REST GET. Several AWS services are plain REST and
+// need none of the JSON-protocol ceremony.
+func awsGET(ctx context.Context, service, host, path string, out any) error {
+	region := os.Getenv("AWS_REGION")
+	creds, err := awssig.FromEnvironment()
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+host+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	awssig.SignGET(req, creds, service, region, time.Now())
+	resp, err := (&http.Client{Timeout: 4 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("%s returned %d", service, resp.StatusCode)
+	}
+	return json.Unmarshal(raw, out)
+}
+
+func readPlatform(ctx context.Context) *platform {
+	region := os.Getenv("AWS_REGION")
+	acct := os.Getenv("RELEASEBOT_ACCOUNT")
+	p := &platform{}
+
+	// ── 1. Is anything sitting in the dead-letter queue? ────────────────────
+	// One message means a slash command was acknowledged in Slack and the work
+	// never happened. It is the single most important number on this page.
+	var q struct {
+		Attributes map[string]string `json:"Attributes"`
+	}
+	body, _ := json.Marshal(map[string]any{
+		"QueueUrl":       "https://sqs." + region + ".amazonaws.com/" + acct + "/releasebot-async-failures",
+		"AttributeNames": []string{"ApproximateNumberOfMessages"},
+	})
+	if err := awsJSON(ctx, "sqs", "sqs."+region+".amazonaws.com",
+		"AmazonSQS.GetQueueAttributes", "application/x-amz-json-1.0", body, &q); err != nil {
+		p.DlqError = err.Error()
+	} else {
+		fmt.Sscanf(q.Attributes["ApproximateNumberOfMessages"], "%d", &p.DlqDepth)
+	}
+
+	// ── 2. Alarm state ──────────────────────────────────────────────────────
+	// ⚠️ CloudWatch speaks the old QUERY protocol -- form-encoded, no
+	// X-Amz-Target, and an XML response. It is the one AWS service here that
+	// does not accept JSON, and sending it JSON fails in a way that reads like
+	// a credentials problem.
+	form := []byte("Action=DescribeAlarms&Version=2010-08-01&AlarmNamePrefix=releasebot&MaxRecords=10")
+	if err := awsJSONRaw(ctx, "monitoring", "monitoring."+region+".amazonaws.com", form, p); err != nil {
+		p.AlarmError = err.Error()
+	}
+
+	// ── 3. Is the edge protected? ───────────────────────────────────────────
+	// ⚠️ Read from API GATEWAY, not from wafv2. The obvious call is
+	// wafv2:GetWebACLForResource, and it is the one the AWS CLI makes -- but
+	// hand-rolled it kept returning 400, and the stage object already carries
+	// `webAclArn` AND the throttle settings in a single ordinary signed GET.
+	// One call, one dialect, two answers.
+	api := apiIDFromBase(os.Getenv("RELEASEBOT_HEALTH_BASE"))
+	if api != "" {
+		for _, st := range []struct {
+			stage string
+			dst   *string
+			rate  *float64
+		}{
+			{"prod", &p.WafProd, &p.ProdRate},
+			{"test", &p.WafTest, &p.TestRate},
+		} {
+			var stage struct {
+				WebAclArn      string `json:"webAclArn"`
+				MethodSettings map[string]struct {
+					ThrottlingRateLimit  float64 `json:"throttlingRateLimit"`
+					ThrottlingBurstLimit int     `json:"throttlingBurstLimit"`
+				} `json:"methodSettings"`
+			}
+			if err := awsGET(ctx, "apigateway", "apigateway."+region+".amazonaws.com",
+				"/restapis/"+api+"/stages/"+st.stage, &stage); err != nil {
+				p.WafError = err.Error()
+				continue
+			}
+			if i := strings.LastIndex(stage.WebAclArn, "/"); i >= 0 {
+				*st.dst = stage.WebAclArn[strings.LastIndex(stage.WebAclArn[:i], "/")+1 : i]
+			}
+			for _, ms := range stage.MethodSettings {
+				*st.rate = ms.ThrottlingRateLimit
+			}
+		}
+	}
+
+	// Test being unprotected is DELIBERATE and the page should say so rather
+	// than render a red cross somebody has to come and ask about.
+	if p.WafProd != "" && p.WafTest == "" {
+		p.Notes = append(p.Notes,
+			"Test has no WAF on purpose — the behaviour suite runs from CI and would trip a rate rule written for humans.")
+	}
+	return p
+}
+
+// awsJSONRaw sends a CloudWatch query-protocol request and scrapes the alarm
+// states out of the XML. A full XML decoder for three fields would be more code
+// than the thing it parses.
+func awsJSONRaw(ctx context.Context, service, host string, form []byte, p *platform) error {
+	region := os.Getenv("AWS_REGION")
+	creds, err := awssig.FromEnvironment()
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+host+"/", bytes.NewReader(form))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	awssig.Sign(req, form, creds, service, region, time.Now())
+	resp, err := (&http.Client{Timeout: 4 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("cloudwatch returned %d", resp.StatusCode)
+	}
+	// ⚠️ A real decoder, not a string split. The first version split on
+	// `<member>` -- and an alarm's Dimensions are ALSO `<member>` elements, so
+	// any alarm with a dimension was cut in half and lost its StateValue. It
+	// reported two of three alarms with an empty state, which reads as "the
+	// alarm is broken" rather than "the parser is".
+	var parsed struct {
+		Alarms []struct {
+			Name   string `xml:"AlarmName"`
+			State  string `xml:"StateValue"`
+			Reason string `xml:"StateReason"`
+		} `xml:"DescribeAlarmsResult>MetricAlarms>member"`
+	}
+	if err := xml.Unmarshal(raw, &parsed); err != nil {
+		return fmt.Errorf("unreadable DescribeAlarms response")
+	}
+	for _, a := range parsed.Alarms {
+		if a.Name != "" {
+			p.Alarms = append(p.Alarms, alarm{Name: a.Name, State: a.State, Reason: a.Reason})
+		}
+	}
+	sort.Slice(p.Alarms, func(i, j int) bool { return p.Alarms[i].Name < p.Alarms[j].Name })
+	return nil
+}
+
+// apiIDFromBase pulls the REST API id out of an execute-api URL.
+func apiIDFromBase(base string) string {
+	base = strings.TrimPrefix(strings.TrimPrefix(base, "https://"), "http://")
+	if i := strings.Index(base, "."); i > 0 {
+		return base[:i]
+	}
+	return ""
 }

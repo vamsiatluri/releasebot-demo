@@ -209,7 +209,8 @@ jobs:
             "${{ needs.build.outputs.sha }}" \
             "${{ github.actor }}" \
             "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            "${{ github.run_id }}"
+            "${{ github.run_id }}" \
+            "${{ github.run_number }}"
 
       - name: Say on the run page what is being asked, and of whom
         run: |
@@ -358,7 +359,9 @@ jobs:
           bash scripts/ci-slack-notify.sh promoted \
             "${{ needs.build.outputs.sha }}" \
             "${{ github.actor }}" \
-            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            "${{ github.run_id }}" \
+            "${{ github.run_number }}"
 
       - name: Record what shipped
         run: |
@@ -392,4 +395,6 @@ jobs:
           bash scripts/ci-slack-notify.sh failed \
             "${{ needs.build.outputs.sha || github.sha }}" \
             "${{ github.actor }}" \
-            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            "${{ github.run_id }}" \
+            "${{ github.run_number }}"

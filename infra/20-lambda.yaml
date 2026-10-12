@@ -12,8 +12,15 @@ Parameters:
   # route. Attachment is a deliberate act with a network behind it.
   #
   # Supplied from the outputs of 15-network.yaml.
-  VpcSubnetIds:        {Type: CommaDelimitedList, Default: ''}
-  VpcSecurityGroupIds: {Type: CommaDelimitedList, Default: ''}
+  # ⚠️ PER ENVIRONMENT, not stack-wide. The first version of this was one pair
+  # of parameters for all four functions, which quietly made VPC attachment an
+  # all-or-nothing property of the whole system -- and attaching "the Lambdas"
+  # then meant attaching production AND test, leaving no un-attached shape to
+  # compare against. The point of the exercise is to be able to run both.
+  VpcSubnetIds:            {Type: CommaDelimitedList, Default: ''}
+  VpcSecurityGroupIds:     {Type: CommaDelimitedList, Default: ''}
+  TestVpcSubnetIds:        {Type: CommaDelimitedList, Default: ''}
+  TestVpcSecurityGroupIds: {Type: CommaDelimitedList, Default: ''}
   TestDryRun:
     Type: String
     Default: '1'
@@ -77,7 +84,8 @@ Parameters:
       bundled into the migration.
 
 Conditions:
-  InVpc: !Not [!Equals [!Join ['', !Ref VpcSubnetIds], '']]
+  InVpc:     !Not [!Equals [!Join ['', !Ref VpcSubnetIds], '']]
+  TestInVpc: !Not [!Equals [!Join ['', !Ref TestVpcSubnetIds], '']]
   HasDatadog:  !Not [!Equals [!Ref DatadogExtensionArn, '']]
   HasAlarms:   !Not [!Equals [!Ref AlarmTopicArn, '']]
 
@@ -259,9 +267,9 @@ Resources:
       ReservedConcurrentExecutions: 2
       Layers: !If [HasDatadog, [!Ref DatadogExtensionArn], !Ref 'AWS::NoValue']
       VpcConfig: !If
-        - InVpc
-        - SubnetIds: !Ref VpcSubnetIds
-          SecurityGroupIds: !Ref VpcSecurityGroupIds
+        - TestInVpc
+        - SubnetIds: !Ref TestVpcSubnetIds
+          SecurityGroupIds: !Ref TestVpcSecurityGroupIds
         - !Ref 'AWS::NoValue'
       Environment:
         Variables:
@@ -353,9 +361,9 @@ Resources:
       ReservedConcurrentExecutions: 2
       Layers: !If [HasDatadog, [!Ref DatadogExtensionArn], !Ref 'AWS::NoValue']
       VpcConfig: !If
-        - InVpc
-        - SubnetIds: !Ref VpcSubnetIds
-          SecurityGroupIds: !Ref VpcSecurityGroupIds
+        - TestInVpc
+        - SubnetIds: !Ref TestVpcSubnetIds
+          SecurityGroupIds: !Ref TestVpcSecurityGroupIds
         - !Ref 'AWS::NoValue'
       Environment:
         Variables:

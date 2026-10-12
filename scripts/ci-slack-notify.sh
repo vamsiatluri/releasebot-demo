@@ -18,6 +18,11 @@ COMMIT="${2:?commit sha}"
 ACTOR="${3:-unknown}"
 RUN_URL="${4:-}"
 RUN_ID="${5:-}"
+# ⚠️ The RUN NUMBER, not the run id. The id (37952182035) is what GitHub's API
+# needs and what the Approve button carries; the NUMBER (#37) is what a person
+# sees on the run page and says out loud. A channel holding three notifications
+# cannot be matched to the runs they came from without it.
+RUN_NUMBER="${6:-}"
 
 if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
   # Not an error. A fork, or a repo without the secret, should still deploy --
@@ -32,14 +37,14 @@ case "$STATUS" in
   awaiting)
     TEXT=":hourglass_flowing_sand: *ReleaseBot — waiting for your approval*
 
-Commit \`${COMMIT}\` built and passed every check on *test*. Production has *not* been touched, and will not be until someone approves.
+*Run #${RUN_NUMBER:-?}* · commit \`${COMMIT}\` built and passed every check on *test*. Production has *not* been touched, and will not be until someone approves.
 
 Approving promotes the artifact that was just tested — no rebuild happens, so what ships is what passed."
     ;;
   promoted)
     TEXT=":white_check_mark: *ReleaseBot — promoted to production*
 
-Commit \`${COMMIT}\`, approved by *${ACTOR}*.
+*Run #${RUN_NUMBER:-?}* · commit \`${COMMIT}\`, approved by *${ACTOR}*.
 
 • build — passed, 13 behaviour checks against a local stand-in
 • test — passed, 8 checks against the live endpoint
@@ -50,7 +55,7 @@ Production and test report the *same code fingerprint*. Nothing was rebuilt betw
   failed)
     TEXT=":x: *ReleaseBot — release failed*
 
-Commit \`${COMMIT}\`. Production was *not* updated; whatever was live is still live.
+*Run #${RUN_NUMBER:-?}* · commit \`${COMMIT}\`. Production was *not* updated; whatever was live is still live.
 
 The rollback path is unchanged: the previous version is still published and the \`live\` alias can be moved back to it in one command."
     ;;

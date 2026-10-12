@@ -13,10 +13,23 @@ except the ones named on the command line.
 
     scripts/_update-stack.py <stack> <template> [Key=Value ...]
 """
-import json, subprocess, sys
+import json, os, subprocess, sys
 
 stack, template = sys.argv[1], sys.argv[2]
-overrides = dict(a.split("=", 1) for a in sys.argv[3:])
+# ⚠️ A value of the form Key=@ENVVAR is read from the ENVIRONMENT, not from the
+# command line. Anything on argv is visible in `ps` to every user on the box and
+# lands in shell history; a secret must never travel that way. Same rule as
+# scripts/set-approval-token.sh.
+overrides = {}
+for a in sys.argv[3:]:
+    k, v = a.split("=", 1)
+    if v.startswith("@"):
+        name = v[1:]
+        if name not in os.environ:
+            print(f"{k}=@{name} but {name} is not set", file=sys.stderr)
+            sys.exit(2)
+        v = os.environ[name]
+    overrides[k] = v
 
 cur = json.loads(subprocess.run(
     ["aws", "cloudformation", "describe-stacks", "--stack-name", stack,
@@ -34,7 +47,8 @@ for k, v in overrides.items():          # genuinely new parameters
     params.append({"ParameterKey": k, "ParameterValue": v})
 
 print(f"{stack}: {sum(1 for p in params if p.get('UsePreviousValue'))} kept, "
-      f"{sum(1 for p in params if 'ParameterValue' in p)} set")
+      f"{sum(1 for p in params if 'ParameterValue' in p)} set "
+      f"({', '.join(sorted(p['ParameterKey'] for p in params if 'ParameterValue' in p))})")
 
 r = subprocess.run(
     ["aws", "cloudformation", "update-stack", "--stack-name", stack,

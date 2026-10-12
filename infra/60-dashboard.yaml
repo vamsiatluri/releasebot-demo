@@ -113,6 +113,27 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:cutRelease*'
                   - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:releaseAutomationMergeback*'
+        - PolicyName: read-the-controls
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The dashboard reports whether the CONTROLS are in place, not
+              # just what version is running. All read-only, and each scoped to
+              # the one thing it reads.
+              - Effect: Allow
+                Action: sqs:GetQueueAttributes
+                Resource: !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:releasebot-async-failures'
+              - Effect: Allow
+                # DescribeAlarms takes no resource ARN -- it is an account-wide
+                # read by design. The handler filters to the releasebot prefix;
+                # that is a convention, not a boundary, and worth saying so.
+                Action: cloudwatch:DescribeAlarms
+                Resource: '*'
+              - Effect: Allow
+                # Reads the stage object, which carries webAclArn and the
+                # throttle. Scoped to this one API's stages.
+                Action: apigateway:GET
+                Resource: !Sub 'arn:aws:apigateway:${AWS::Region}::/restapis/*/stages/*'
         - PolicyName: read-release-ledger
           PolicyDocument:
             Version: '2012-10-17'

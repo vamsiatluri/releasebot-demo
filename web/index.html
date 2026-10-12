@@ -174,6 +174,18 @@
   .rb-cmd{margin-top:10px; font-family:var(--mono); font-size:11px; color:var(--muted);
           overflow-x:auto; white-space:nowrap; padding-bottom:2px}
 
+  /* platform controls */
+  .ctl{display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+  .ctl-box{border:1px solid var(--rule); border-radius:4px; background:var(--surface-2); padding:12px 13px}
+  .ctl-box h4{margin:0 0 8px; font-family:var(--mono); font-size:10px; letter-spacing:.1em;
+              text-transform:uppercase; color:var(--muted); font-weight:600}
+  .ctl-row{display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+           padding:4px 0; font-size:12.5px; color:var(--ink-2); border-top:1px solid var(--rule)}
+  .ctl-row:first-of-type{border-top:none}
+  .ctl-row .v{font-family:var(--mono); font-size:11.5px; text-align:right}
+  .ctl-row .v.ok{color:var(--clear)}  .ctl-row .v.bad{color:var(--blocking)}
+  .ctl-row .v.warn{color:var(--warn)} .ctl-row .v.off{color:var(--muted)}
+
   /* walkthrough */
   .flowwrap{display:grid; grid-template-columns:minmax(200px,236px) 1fr;
             background:var(--surface); border:1px solid var(--rule); border-radius:4px; overflow:hidden}
@@ -303,6 +315,16 @@
            at the moment it did it — not reconstructed afterwards from Slack.</p>
       </div>
       <div class="lp"><div id="rel-body"></div></div>
+    </section>
+
+    <section>
+      <div class="sechead">
+        <h2>The controls around the release</h2>
+        <p>Not what is running — whether the things that protect it are actually in place.
+           Read live from AWS, because a control described in a document is not a control.</p>
+      </div>
+      <div class="lp"><div class="ctl" id="ctl-body"></div>
+        <p class="lp-note" id="ctl-note"></p></div>
     </section>
 
     <section>
@@ -560,6 +582,7 @@ async function load(){
   renderRun(LIVE.run);
   renderReleases(LIVE.releases);
   renderRollback(LIVE.rollback);
+  renderPlatform(LIVE.platform, LIVE.pairs);
   paintFlow();
   startPolling();
 }
@@ -653,6 +676,51 @@ function renderRollback(groups){
       <div class="rb-cmd">scripts/rollback.sh ${esc(g.env)} &lt;commit&gt;</div>
     </div>`;
   }).join("");
+}
+
+
+// ── The controls ─────────────────────────────────────────────────────────────
+function renderPlatform(p, pairs){
+  const el = document.getElementById("ctl-body");
+  if (!p){ el.innerHTML = ""; return; }
+  const row = (k, v, cls) =>
+    `<div class="ctl-row"><span>${esc(k)}</span><span class="v ${cls||""}">${esc(v)}</span></div>`;
+
+  // Network posture is per ENVIRONMENT, and the two deliberately differ: this
+  // is the comparison, not a drift to be alarmed about.
+  const vpcOf = side => {
+    const v = (pairs || []).map(x => x[side].vpc).filter(Boolean);
+    return v.length ? v[0] : "";
+  };
+  const prodVpc = vpcOf("prod"), testVpc = vpcOf("test");
+
+  el.innerHTML = `
+    <div class="ctl-box"><h4>Network</h4>
+      ${row("production", prodVpc ? "private subnets" : "AWS-managed", prodVpc ? "ok" : "off")}
+      ${row("", prodVpc || "no VPC attachment", "off")}
+      ${row("test", testVpc ? "private subnets" : "AWS-managed", testVpc ? "ok" : "off")}
+    </div>
+    <div class="ctl-box"><h4>Edge protection</h4>
+      ${row("WAF · prod", p.wafProd || "none", p.wafProd ? "ok" : "bad")}
+      ${row("WAF · test", p.wafTest || "none (deliberate)", p.wafTest ? "ok" : "off")}
+      ${row("throttle · prod", (p.prodRate || 0) + " req/s")}
+      ${row("IP allowlist", "off — unrestricted", "off")}
+    </div>
+    <div class="ctl-box"><h4>Dropped work</h4>
+      ${row("dead-letter queue", p.dlqError ? "unreadable" : p.dlqDepth + " message" + (p.dlqDepth === 1 ? "" : "s"),
+            p.dlqError ? "bad" : (p.dlqDepth > 0 ? "bad" : "ok"))}
+      ${row("", p.dlqDepth > 0 ? "a release was accepted and never performed" : "nothing lost", "off")}
+    </div>
+    <div class="ctl-box"><h4>Alarms</h4>
+      ${(p.alarms || []).length
+        ? p.alarms.map(a => row(a.name.replace(/^releasebot-/, ""), a.state,
+            a.state === "OK" ? "ok" : (a.state === "ALARM" ? "bad" : "warn"))).join("")
+        : row("alarms", p.alarmError || "none found", "bad")}
+    </div>`;
+
+  document.getElementById("ctl-note").textContent =
+    (p.notes || []).join(" ") +
+    " Production runs inside a dedicated VPC and test does not — that difference is the point, not a fault.";
 }
 
 // ── The pipeline panel ───────────────────────────────────────────────────────
