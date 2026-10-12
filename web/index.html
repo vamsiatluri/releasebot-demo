@@ -174,6 +174,24 @@
   .rb-cmd{margin-top:10px; font-family:var(--mono); font-size:11px; color:var(--muted);
           overflow-x:auto; white-space:nowrap; padding-bottom:2px}
 
+  /* architecture graph */
+  .arch{background:var(--surface); border:1px solid var(--rule); border-radius:5px; padding:18px}
+  .arch svg{width:100%; height:auto; display:block; min-width:720px}
+  .arch-scroll{overflow-x:auto}
+  .arch text{font-family:var(--mono); fill:var(--ink-2)}
+  .arch .lbl{font-size:10px; letter-spacing:.09em; text-transform:uppercase; fill:var(--muted)}
+  .arch .nm{font-family:var(--display); font-size:12px; font-weight:600; fill:var(--ink)}
+  .arch .sub{font-size:9.5px; fill:var(--muted)}
+  .arch .box{fill:var(--surface-2); stroke:var(--rule); stroke-width:1; rx:4}
+  .arch .zone{fill:none; stroke:var(--rule); stroke-width:1; stroke-dasharray:4 4; rx:6}
+  .arch .zone.vpc{stroke:var(--clear)}
+  .arch .wire{stroke:var(--rule); stroke-width:1.4; fill:none; marker-end:url(#ah)}
+  .arch .wire.hot{stroke:var(--signal)}
+  .arch .wire.gate{stroke:var(--warn); stroke-dasharray:5 3}
+  .arch .tag{font-size:9px; fill:var(--muted)}
+  .arch .accent{fill:var(--signal)}
+  .arch .good{fill:var(--clear)}
+
   /* platform controls */
   .ctl{display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
   .ctl-box{border:1px solid var(--rule); border-radius:4px; background:var(--surface-2); padding:12px 13px}
@@ -315,6 +333,15 @@
            at the moment it did it — not reconstructed afterwards from Slack.</p>
       </div>
       <div class="lp"><div id="rel-body"></div></div>
+    </section>
+
+    <section>
+      <div class="sechead">
+        <h2>How it is wired</h2>
+        <p>Drawn from the live state, not from a diagram someone kept up to date by hand —
+           the versions, the network boundary and the config paths below are read from AWS.</p>
+      </div>
+      <div class="arch"><div class="arch-scroll" id="arch"></div></div>
     </section>
 
     <section>
@@ -583,6 +610,7 @@ async function load(){
   renderReleases(LIVE.releases);
   renderRollback(LIVE.rollback);
   renderPlatform(LIVE.platform, LIVE.pairs);
+  renderArch(LIVE);
   paintFlow();
   startPolling();
 }
@@ -678,6 +706,113 @@ function renderRollback(groups){
   }).join("");
 }
 
+
+
+// ── The architecture graph ───────────────────────────────────────────────────
+//
+// Drawn from the live payload rather than maintained by hand. A hand-kept
+// diagram is a claim about the system; this one cannot disagree with it,
+// because the version numbers, the VPC boundary and the config paths come from
+// the same read that fills the rest of the page.
+function renderArch(d){
+  const el = document.getElementById("arch");
+  if (!el) return;
+  const pairs = d.pairs || [];
+  const prodV = pairs.map(p => p.prod.version).join(" / ") || "—";
+  const testV = pairs.map(p => p.test.version).join(" / ") || "—";
+  const vpc   = (pairs.find(p => p.prod.vpc) || {}).prod?.vpc || "";
+  const pf    = d.platform || {};
+
+  const box = (x,y,w,h,nm,sub,cls) =>
+    `<rect class="box ${cls||''}" x="${x}" y="${y}" width="${w}" height="${h}"/>` +
+    `<text class="nm" x="${x+11}" y="${y+19}">${esc(nm)}</text>` +
+    (sub ? `<text class="sub" x="${x+11}" y="${y+33}">${esc(sub)}</text>` : "");
+
+  // A right-angled connector reads better than a diagonal when boxes are in
+  // columns -- a diagonal crossing three columns is impossible to follow.
+  const elbow = (x1,y1,x2,y2,cls) => {
+    const mx = x1 + (x2 - x1) / 2;
+    return `<path class="wire ${cls||''}" d="M${x1} ${y1} H${mx} V${y2} H${x2-7}"/>`;
+  };
+
+  el.innerHTML = `
+  <svg viewBox="0 0 1060 560" role="img" aria-label="ReleaseBot architecture">
+    <defs>
+      <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6"
+              orient="auto-start-reverse">
+        <path d="M0 0 L10 5 L0 10 z" fill="currentColor" style="color:var(--rule)"/>
+      </marker>
+    </defs>
+
+    <text class="lbl" x="10" y="16">1 · who asks</text>
+    <text class="lbl" x="214" y="16">2 · the front door</text>
+    <text class="lbl" x="452" y="16">3 · the functions</text>
+    <text class="lbl" x="832" y="16">4 · what they read and write</text>
+
+    ${box(10,30,150,44,"Slack","/cutrelease · /mergeback")}
+    ${box(10,86,150,44,"Jira webhook","a fixVersion transition")}
+    ${box(10,142,150,44,"GitHub Actions","the release pipeline")}
+
+    ${box(214,30,180,56,"API Gateway","REST, regional, PUBLIC")}
+    <text class="tag" x="225" y="100">WAF: ${esc(pf.wafProd || "none")} · ${esc(pf.prodRate||0)} req/s</text>
+    <text class="tag" x="225" y="114">signature checked IN the function</text>
+    ${box(214,130,180,36,"stage /prod","cutFn = cutRelease:live")}
+    ${box(214,174,180,36,"stage /test","cutFn = cutReleaseTest:live")}
+
+    <rect class="zone vpc" x="440" y="26" width="330" height="118"/>
+    <text class="lbl" x="452" y="44" style="fill:var(--clear)">production · private subnets</text>
+    ${box(452,54,306,38,"cutRelease:live  ·  mergeback:live","RARC_ENV=prod · versions " + prodV)}
+    <text class="tag" x="452" y="108">${esc(vpc || "not attached")} · no public address · egress via NAT</text>
+    <text class="tag" x="452" y="122">endpoints: SSM · Lambda · DynamoDB · S3</text>
+
+    <rect class="zone" x="440" y="162" width="330" height="86"/>
+    <text class="lbl" x="452" y="180">test · AWS-managed network</text>
+    ${box(452,190,306,38,"cutReleaseTest:live  ·  mergebackTest:live","RARC_ENV=test · versions " + testV)}
+
+    ${box(832,30,218,40,"Parameter Store","/releasebot/<env>/ · read at INIT")}
+    ${box(832,82,218,40,"DynamoDB ledger","one row per cut and mergeback")}
+    ${box(832,134,218,40,"SQS dead letter","" + (pf.dlqDepth||0) + " messages")}
+    ${box(832,186,218,40,"GitHub API","branches and pull requests")}
+
+    ${elbow(160,52,214,58)}
+    ${elbow(160,108,214,58)}
+    ${elbow(394,148,452,73,"hot")}
+    ${elbow(394,192,452,209,"hot")}
+    ${elbow(758,73,832,50)}
+    ${elbow(758,73,832,102)}
+    ${elbow(758,73,832,206)}
+    ${elbow(758,209,832,50)}
+
+    <text class="lbl" x="10" y="296">the deploy path — the only way code changes</text>
+    <line x1="10" y1="306" x2="1050" y2="306" stroke="var(--rule)"/>
+
+    ${box(10,322,160,44,"commit to main","nobody runs anything")}
+    ${box(206,322,170,44,"build once","no AWS credentials")}
+    ${box(412,322,170,44,"OIDC → STS","temporary creds, no stored key")}
+    ${box(618,322,170,44,"deploy to test","publish version, move alias")}
+    ${box(824,322,226,44,"verify the fingerprint","read back off the running function")}
+
+    ${elbow(170,344,206,344)}
+    ${elbow(376,344,412,344)}
+    ${elbow(582,344,618,344)}
+    ${elbow(788,344,824,344)}
+
+    ${box(206,410,170,48,"⏸ approval gate","a named human · GitHub or Slack")}
+    ${box(412,410,170,48,"promote to prod","the SAME artifact, no rebuild")}
+    ${box(618,410,170,48,"verify again","prod fingerprint = test fingerprint")}
+    ${box(824,410,226,48,"rollback","move the alias to an older version")}
+
+    <path class="wire gate" d="M909 366 V390 H291 V410"/>
+    <text class="tag" x="300" y="384">production is untouched until someone approves</text>
+    ${elbow(376,434,412,434,"gate")}
+    ${elbow(582,434,618,434)}
+    ${elbow(788,434,824,434)}
+
+    <text class="tag" x="10" y="500">Everything above the line happens on every release command.</text>
+    <text class="tag" x="10" y="516">Everything below it happens on every commit — and stops, in the middle, for a person.</text>
+    <text class="tag" x="10" y="532">The two halves share nothing but the functions themselves: the pipeline can change the CODE, never the ENVIRONMENT a function thinks it is.</text>
+  </svg>`;
+}
 
 // ── The controls ─────────────────────────────────────────────────────────────
 function renderPlatform(p, pairs){
