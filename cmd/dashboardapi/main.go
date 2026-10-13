@@ -64,6 +64,11 @@ type health struct {
 	// precisely how a half-finished rollout reads as finished.
 	ConfigSource string `json:"configSource,omitempty"` // ssm | env
 	SecretSource string `json:"secretSource,omitempty"` // reference | plaintext | mixed | unset
+	// ⚠️ "unrestricted" or "N permitted". Surfaced because an EMPTY cut
+	// allowlist admits the whole workspace -- the deliberate default, and
+	// exactly the kind of optional control that is never switched on if nothing
+	// ever says it is off.
+	CutAllowlist string `json:"cutAllowlist,omitempty"`
 	Error        string `json:"error,omitempty"`
 }
 
@@ -376,6 +381,7 @@ func readHealth(ctx context.Context, base, stage string) health {
 		Built        string `json:"built"`
 		ConfigSource string `json:"configSource"`
 		SecretSource string `json:"secretSource"`
+		CutAllowlist string `json:"cutAllowlist"`
 	}
 	if err := json.Unmarshal(raw, &got); err != nil {
 		h.Error = fmt.Sprintf("HTTP %d, unparseable", resp.StatusCode)
@@ -383,6 +389,7 @@ func readHealth(ctx context.Context, base, stage string) health {
 	}
 	h.OK, h.Env, h.Commit, h.Built = got.OK, got.Env, got.Commit, got.Built
 	h.ConfigSource, h.SecretSource = got.ConfigSource, got.SecretSource
+	h.CutAllowlist = got.CutAllowlist
 	return h
 }
 

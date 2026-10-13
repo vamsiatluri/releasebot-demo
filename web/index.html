@@ -1106,6 +1106,16 @@ function render(d){
   // readable by anyone with lambda:GetFunctionConfiguration. A partly migrated
   // function must read as neither — a half-finished rollout that displays as
   // hardened is worse than one that displays as plaintext.
+  // ⚠️ "unrestricted" is the DELIBERATE default — an empty allowlist admits the
+  // whole Slack workspace, because defaulting to "nobody" would break an
+  // existing workflow on cutover. But a default nothing reports is a control
+  // nobody turns on, so it is drawn as a warning rather than as neutral.
+  const cutBadge = v => {
+    if (!v) return '<span class="mono">—</span>';
+    if (v === 'unrestricted') return '<span class="pill held">anyone in the workspace</span>';
+    return `<span class="pill ok">${esc(v)}</span>`;
+  };
+
   const secretBadge = v => {
     if (!v) return '<span class="mono">—</span>';
     if (v === 'reference') return '<span class="pill ok">SecureString reference</span>';
@@ -1126,6 +1136,7 @@ function render(d){
       <div class="row"><span>built</span><span class="mono">${esc(h.built) || '—'}</span></div>
       <div class="row"><span>config from</span><span class="mono">${esc(h.configSource) || '—'}</span></div>
       <div class="row"><span>secrets</span>${secretBadge(h.secretSource)}</div>
+      <div class="row"><span>who may cut</span>${cutBadge(h.cutAllowlist)}</div>
     </div>`).join('');
 
   document.getElementById('stamp').textContent = 'read live ' + esc(d.readAt);

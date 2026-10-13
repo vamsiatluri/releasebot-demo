@@ -44,7 +44,8 @@ type Entry struct {
 	Version  string   // 5.4.0
 	Branch   string   // release/5.4.0
 	SHA      string   // the commit the branch was cut at
-	Actor    string   // who asked
+	Actor    string   // display name, for humans
+	ActorID  string   // ⚠️ the IMMUTABLE id — see release.Command.ActorID
 	Source   string   // slack | jira | api
 	Issues   []string // JIRA keys referenced by the change
 	Commits  int      // how many commits this release carries
@@ -128,6 +129,7 @@ func Put(ctx context.Context, e Entry) error {
 		"branch":  str(e.Branch),
 		"sha":     str(e.SHA),
 		"actor":   str(e.Actor),
+		"actorId": str(e.ActorID),
 		"source":  str(e.Source),
 		"at":      str(e.At.Format(time.RFC3339)),
 		"dryRun":  map[string]any{"BOOL": e.DryRun},

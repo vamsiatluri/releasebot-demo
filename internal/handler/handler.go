@@ -96,10 +96,10 @@ func (h *Handler) Handle(ctx context.Context, req events.APIGatewayProxyRequest)
 		// from outside, which is how a half-finished rollout looks finished.
 		return events.JSON(200, fmt.Sprintf(
 			`{"ok":true,"env":%q,"action":%q,"stage":%q,"commit":%q,"built":%q,`+
-				`"configSource":%q,"configPath":%q,"secretSource":%q,`+
+				`"configSource":%q,"configPath":%q,"secretSource":%q,"cutAllowlist":%q,`+
 				`"defaultOwner":%q,"defaultBranch":%q,"slackChannel":%q,"datadogService":%q}`,
 			h.Cfg.Env, h.Action, req.RequestContext.Stage, BuildCommit, BuildTime,
-			h.Cfg.ConfigSource, h.Cfg.ConfigPath, secretSource(),
+			h.Cfg.ConfigSource, h.Cfg.ConfigPath, secretSource(), h.Cfg.CutAllowlistState(),
 			h.Cfg.DefaultOwner, h.Cfg.DefaultBranch, h.Cfg.SlackChannel, h.Cfg.DatadogService))
 	}
 
@@ -138,11 +138,44 @@ func (h *Handler) handleSlack(ctx context.Context, log *obs.Logger,
 		return slackEphemeral(fmt.Sprintf(":warning: %v", err))
 	}
 	cmd.Actor = form.Get("user_name")
+	cmd.ActorID = form.Get("user_id")
 	cmd.Channel = form.Get("channel_id")
 	cmd.Source = "slack"
 	responseURL := form.Get("response_url")
 
-	log = log.With("repo", cmd.Repo).With("version", cmd.Version).With("actor", cmd.Actor)
+	log = log.With("repo", cmd.Repo).With("version", cmd.Version).
+		With("actor", cmd.Actor).With("actor_id", cmd.ActorID)
+
+	// ── Who may ask for a release ───────────────────────────────────────────
+	//
+	// The signature proves the request came from our Slack app. It says nothing
+	// about WHICH member of the workspace sent it -- so until now any user who
+	// could type the slash command could cut a release branch, and the user name
+	// was recorded rather than checked. Found by a test that sent a fabricated
+	// `user_id=U0DEMO` and had the cut execute.
+	//
+	// ⚠️ MATCHED ON user_id, NOT user_name. A display name is chosen by its own
+	// subject, so an allowlist of names is one rename away from admitting the
+	// wrong person -- or locking out the right one.
+	//
+	// ⛔ EMPTY MEANS UNRESTRICTED HERE, which is the OPPOSITE of the approval
+	// allowlist, and the asymmetry is deliberate:
+	//   - approving a production deploy with an empty list must admit NOBODY,
+	//     because a misconfiguration there is an open door on production;
+	//   - asking for a release BRANCH is low-risk, the production gate is the
+	//     approval, and defaulting to "nobody" would break an existing
+	//     workflow the moment this ships -- on cutover day, in someone else's
+	//     account.
+	// The cost of that choice is that an unset list is invisible, which is how
+	// an optional control becomes one nobody ever turns on. So the state is
+	// REPORTED: /health carries `cutAllowlist`, and the dashboard shows it.
+	if !h.Cfg.PermittedToCut(cmd.ActorID) {
+		log.With("actor_id", cmd.ActorID).Warn("rejected: not on the cut allowlist")
+		log.Count("releasebot.auth.rejected", 1, "source:slack-not-allowed")
+		return slackEphemeral(fmt.Sprintf(
+			":no_entry: You are not permitted to cut releases.\n"+
+				"_To permit this person, add `%s` to RELEASEBOT_CUT_ALLOWLIST._", cmd.ActorID))
+	}
 
 	if h.AckOnly {
 		// Slack hangs up at 3 seconds. Acknowledge now; the work runs in its
@@ -202,8 +235,13 @@ func (h *Handler) handleJira(ctx context.Context, log *obs.Logger,
 	cmd := release.Command{
 		Repo:    h.Cfg.DefaultOwner + "/" + strings.ToLower(ev.Issue.Fields.Project.Key),
 		Version: version,
-		Actor:   ev.User.DisplayName,
-		Source:  "jira",
+		// No ActorID: a Jira transition has no Slack user. Leaving it EMPTY is
+		// the honest record -- filling it with the Jira account id would make
+		// one field mean two different namespaces, and a later query for
+		// "what did U0123ABCD release" would silently match nothing or, worse,
+		// something.
+		Actor:  ev.User.DisplayName,
+		Source: "jira",
 	}
 	log = log.With("issue", ev.Issue.Key).With("version", version)
 

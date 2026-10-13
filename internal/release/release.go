@@ -30,7 +30,19 @@ var (
 type Command struct {
 	Repo    string // owner/name
 	Version string // 5.4.0
-	Actor   string // slack user who asked
+	Actor   string // slack DISPLAY NAME — for humans reading the channel
+	// ⚠️ THE IMMUTABLE ID, and the reason both fields exist.
+	//
+	// Actor comes from Slack's `user_name`, which is a DISPLAY NAME the user can
+	// change at will. An audit record keyed on it answers "who cut this release"
+	// with a string its own subject controls -- so two releases six months apart
+	// can name the same person differently, or different people identically.
+	//
+	// ActorID is `user_id` (U0123ABCD): opaque, stable for the life of the
+	// account, and what the approval allowlist already matches on. The name is
+	// kept because a channel full of U0123ABCD is unreadable; the ID is what the
+	// record is actually keyed on.
+	ActorID string
 	Channel string
 	// Which door this arrived through. Recorded on the ledger row, because
 	// "a human typed this" and "a Jira transition fired this" are different
@@ -224,7 +236,7 @@ func (s *Service) record(ctx context.Context, log *obs.Logger,
 		Env: s.Env, Action: action, Repo: cmd.Repo,
 		Property: ledger.Property(s.Properties, cmd.Repo),
 		Version:  cmd.Version, Branch: branch, SHA: sha,
-		Actor: cmd.Actor, Source: cmd.Source, URL: prURL, DryRun: s.DryRun,
+		Actor: cmd.Actor, ActorID: cmd.ActorID, Source: cmd.Source, URL: prURL, DryRun: s.DryRun,
 	}
 
 	// What is IN this release? Asking GitHub for trunk..release-branch is the

@@ -39,7 +39,7 @@ TS=$(date +%s)
 # backwards still returns 200 -- the signature verified and the handler then
 # refused the arguments -- which proves verification but NOT the command path,
 # and reads as a pass if you only check the status code.
-BODY="token=unused&team_id=T0DEMO&channel_id=C0RELEASE&user_id=U0DEMO&user_name=demo&command=%2Fcut&text=${PROVE_REPO:-releasebot-demo}+${PROVE_VERSION:-4.99.0}&response_url=https%3A%2F%2Fexample.invalid%2Fnope"
+BODY="token=unused&team_id=T0DEMO&channel_id=C0RELEASE&user_id=${PROVE_USER:-U0DEMO}&user_name=demo&command=%2Fcut&text=${PROVE_REPO:-releasebot-demo}+${PROVE_VERSION:-4.99.0}&response_url=https%3A%2F%2Fexample.invalid%2Fnope"
 
 sign() { # $1=timestamp $2=body  -> v0=<hex>
   printf 'v0:%s:%s' "$1" "$2" \
@@ -65,14 +65,20 @@ FAIL=0
 # ── 1. POSITIVE: a correct signature must be ACCEPTED ───────────────────────
 CODE=$(call "$(sign "$TS" "$BODY")" "$TS")
 RESP=$(cat /tmp/rb-slash.$$ 2>/dev/null); rm -f /tmp/rb-slash.$$
-if [ "$CODE" = "200" ] && ! printf '%s' "$RESP" | grep -qi "not a valid\|unauthorized\|error"; then
+# ⛔ ASSERT THE SUCCESS SIGNAL, do not enumerate failures.
+# This check used to list refusal phrases ("not a valid", "unauthorized",
+# "error") and pass anything else. The moment a NEW refusal was added -- "You
+# are not permitted to cut releases" -- the prover printed "command accepted"
+# for a request that had been refused. A denylist of failures cannot anticipate
+# the next failure; the acknowledgement is a single known string, so match THAT.
+if [ "$CODE" = "200" ] && printf '%s' "$RESP" | grep -q "hourglass_flowing_sand"; then
   echo "✓ correctly signed  -> HTTP 200, command accepted"
   echo "    $(printf '%s' "$RESP" | head -c 300)"
 elif [ "$CODE" = "200" ]; then
   # ⛔ 200 with a refusal in the body is NOT a pass. The signature verified and
   # the handler then rejected the arguments -- checking only the status code
   # would report this as success and prove half of what it claims.
-  echo "✗ correctly signed  -> HTTP 200 but the command was REFUSED"
+  echo "✗ correctly signed  -> HTTP 200 but the command was REFUSED (no acknowledgement in the body)"
   echo "    $(printf '%s' "$RESP" | head -c 300)"
   FAIL=1
 else

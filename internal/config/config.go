@@ -65,6 +65,45 @@ type Config struct {
 	DatadogAPIKey  string
 	DatadogService string
 	DryRun         bool
+
+	// Slack user IDs permitted to run the cut/merge slash commands.
+	// ⛔ EMPTY = UNRESTRICTED. See the comment at the call site in
+	// internal/handler for why this is the opposite default to the approval
+	// allowlist, and why the state has to be reported rather than assumed.
+	CutAllowlist []string
+}
+
+// PermittedToCut reports whether a Slack user id may run a release command.
+//
+// ⚠️ An empty allowlist returns true for everyone. That is the documented
+// default, not an oversight -- but it means this function cannot be read as
+// "there is a control here". CutAllowlistState is what tells an operator which
+// of the two modes is in force.
+func (c Config) PermittedToCut(userID string) bool {
+	if len(c.CutAllowlist) == 0 {
+		return true
+	}
+	// ⚠️ An allowlist with entries and an EMPTY user id must refuse. A Jira or
+	// API-sourced command carries no Slack user, and silently admitting it
+	// would route around the control entirely.
+	if strings.TrimSpace(userID) == "" {
+		return false
+	}
+	for _, a := range c.CutAllowlist {
+		if strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(userID)) {
+			return true
+		}
+	}
+	return false
+}
+
+// CutAllowlistState describes the control for /health, so "unrestricted" can
+// never be a silent state.
+func (c Config) CutAllowlistState() string {
+	if len(c.CutAllowlist) == 0 {
+		return "unrestricted"
+	}
+	return fmt.Sprintf("%d permitted", len(c.CutAllowlist))
 }
 
 // SecretResolver turns a reference into a secret value. In production the
@@ -83,6 +122,7 @@ func Load(ctx context.Context, resolve SecretResolver) (Config, error) {
 		Env:            envOr("RARC_ENV", "test"),
 		ConfigURL:      os.Getenv("RARC_CONFIG_URL"),
 		DefaultOwner:   os.Getenv("DEFAULT_OWNER"),
+		CutAllowlist:   splitList(os.Getenv("RELEASEBOT_CUT_ALLOWLIST")),
 		SlackChannel:   os.Getenv("SLACK_CHANNEL"),
 		AckOnly:        os.Getenv("RELEASEBOT_ACK_ONLY") == "1",
 		GitHubAPI:      envOr("RELEASEBOT_GITHUB_API_URL", "https://api.github.com"),
@@ -212,8 +252,31 @@ func (c Config) WithParameters(v map[string]string) Config {
 	set(&c.DatadogSite, "datadog-site")
 	set(&c.DatadogService, "datadog-service")
 	set(&c.Properties, "properties")
+	// ⚠️ Parameter Store wins, so adding or removing a permitted person is a
+	// parameter write rather than a deploy. ⛔ But a PRESENT-and-empty value
+	// must not silently widen the control: `set` already ignores a blank, so
+	// clearing the list is a deliberate deletion of the parameter, not a typo.
+	if v, ok := v["cut-allowlist"]; ok && strings.TrimSpace(v) != "" {
+		c.CutAllowlist = splitList(v)
+	}
 	if s, ok := v["ack-only"]; ok && strings.TrimSpace(s) != "" {
 		c.AckOnly = strings.EqualFold(strings.TrimSpace(s), "true")
 	}
 	return c
+}
+
+// splitList parses a comma-separated allowlist, dropping blanks.
+//
+// ⚠️ Dropping blanks matters: "U1,,U2" and a trailing comma are the two things
+// a human editing a list in a console actually produces, and an empty entry in
+// the list would match an empty user id -- admitting exactly the caller that
+// carries no Slack user at all.
+func splitList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

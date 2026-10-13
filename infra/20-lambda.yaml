@@ -75,6 +75,18 @@ Parameters:
   SlackChannel:       {Type: String, Default: ''}
   SecretsPrefix:      {Type: String, Default: 'releasebot'}
 
+  # Slack user IDs permitted to run /cut and /merge.
+  # ⛔ EMPTY = UNRESTRICTED, which is the OPPOSITE of SlackApprovers, where
+  # empty means NOBODY. Deliberate: asking for a release branch is low-risk and
+  # the production gate is the approval, so defaulting to "nobody" would break
+  # an existing workflow on cutover day. /health reports which mode is in force
+  # (`cutAllowlist`) so "unrestricted" can never be a silent state.
+  # ⚠️ IDs (U0123ABCD), never display names -- a name is chosen by its subject.
+  CutAllowlist:
+    Type: String
+    Default: ''
+    Description: Comma-separated Slack user IDs permitted to cut. Empty = anyone in the workspace.
+
   # ── Secrets by REFERENCE ────────────────────────────────────────────────────
   # ⛔ These four were PLAINTEXT Lambda environment variables -- a 93-character
   # GitHub token among them, readable by anyone with
@@ -272,6 +284,7 @@ Resources:
           RARC_CONFIG_URL: !Ref RarcConfigUrl
           DEFAULT_OWNER: !Ref DefaultOwner
           SLACK_CHANNEL: !Ref SlackChannel
+          RELEASEBOT_CUT_ALLOWLIST: !Ref CutAllowlist
           SECRETS_PREFIX: !Sub '${SecretsPrefix}/prod'
           RELEASEBOT_ACK_ONLY: '1'
           DD_SERVICE: releasebot
@@ -337,6 +350,7 @@ Resources:
           RARC_CONFIG_URL: !Ref RarcConfigUrl
           DEFAULT_OWNER: !Ref DefaultOwner
           SLACK_CHANNEL: !Ref SlackChannel
+          RELEASEBOT_CUT_ALLOWLIST: !Ref CutAllowlist
           SECRETS_PREFIX: !Sub '${SecretsPrefix}/test'
           RELEASEBOT_ACK_ONLY: '1'
           DD_SERVICE: releasebot
@@ -388,6 +402,7 @@ Resources:
           RARC_CONFIG_URL: !Ref RarcConfigUrl
           DEFAULT_OWNER: !Ref DefaultOwner
           SLACK_CHANNEL: !Ref SlackChannel
+          RELEASEBOT_CUT_ALLOWLIST: !Ref CutAllowlist
           SECRETS_PREFIX: !Sub '${SecretsPrefix}/prod'
           RELEASEBOT_ACK_ONLY: '1'
           DD_SERVICE: releasebot
@@ -442,6 +457,7 @@ Resources:
           RARC_CONFIG_URL: !Ref RarcConfigUrl
           DEFAULT_OWNER: !Ref DefaultOwner
           SLACK_CHANNEL: !Ref SlackChannel
+          RELEASEBOT_CUT_ALLOWLIST: !Ref CutAllowlist
           SECRETS_PREFIX: !Sub '${SecretsPrefix}/test'
           RELEASEBOT_ACK_ONLY: '1'
           DD_SERVICE: releasebot

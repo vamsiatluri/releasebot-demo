@@ -39,3 +39,62 @@ func TestRedactedNeverCarriesASecretValue(t *testing.T) {
 		}
 	}
 }
+
+// ⛔ THE ASYMMETRY IS DELIBERATE AND MUST STAY PINNED.
+//
+// An EMPTY cut allowlist admits everyone; an empty APPROVAL allowlist admits
+// nobody. Someone will eventually read one of those and "fix" the other to
+// match. These tests say which is which and why, so that change has to be
+// deliberate.
+func TestPermittedToCut(t *testing.T) {
+	// Empty = unrestricted. Asking for a release BRANCH is low-risk, the
+	// production gate is the approval, and defaulting to "nobody" would break
+	// an existing workflow the moment it ships.
+	open := Config{}
+	for _, id := range []string{"U0ANYONE", "", "whatever"} {
+		if !open.PermittedToCut(id) {
+			t.Fatalf("empty allowlist must admit %q", id)
+		}
+	}
+	if got := open.CutAllowlistState(); got != "unrestricted" {
+		t.Fatalf("an empty list must REPORT itself as unrestricted, got %q", got)
+	}
+
+	c := Config{CutAllowlist: []string{"U0ALLOWED", " u0spaced "}}
+	if !c.PermittedToCut("U0ALLOWED") {
+		t.Fatal("a listed id must be admitted")
+	}
+	// Slack ids are case-stable, but a human retyping one is not. Trim and fold.
+	if !c.PermittedToCut("u0allowed") || !c.PermittedToCut("U0SPACED") {
+		t.Fatal("matching must trim and fold case")
+	}
+	if c.PermittedToCut("U0DENIED") {
+		t.Fatal("an unlisted id must be refused")
+	}
+	// ⛔ The case that routes around the control: a command with NO Slack user
+	// (Jira, API) must not be admitted by a non-empty allowlist.
+	if c.PermittedToCut("") {
+		t.Fatal("an empty user id must be refused when a list exists")
+	}
+	if got := c.CutAllowlistState(); got != "2 permitted" {
+		t.Fatalf("state should count the list, got %q", got)
+	}
+}
+
+// A list a human edited in a console is the input that actually arrives.
+func TestSplitListDropsBlanks(t *testing.T) {
+	got := splitList("U1,,U2 , ,U3,")
+	if len(got) != 3 || got[1] != "U2" {
+		t.Fatalf("want 3 clean entries, got %v", got)
+	}
+	// ⛔ A blank entry would match an empty user id — the caller with no Slack
+	// user at all.
+	for _, g := range got {
+		if g == "" {
+			t.Fatal("a blank entry would admit a command with no Slack user")
+		}
+	}
+	if len(splitList("")) != 0 || len(splitList("  ,  ")) != 0 {
+		t.Fatal("an effectively empty string must yield no entries, not one blank")
+	}
+}
