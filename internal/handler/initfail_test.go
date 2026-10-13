@@ -44,4 +44,11 @@ func TestUnreadyResponse(t *testing.T) {
 	if !strings.Contains(resp.Body, "GITHUB_TOKEN") {
 		t.Fatal("the reason must name the missing key, or the 503 is as useless as the 502")
 	}
+	// ⚠️ And WHICH environment is unready. This response is hand-built rather
+	// than produced by the normal health handler, so it silently lacked the
+	// account label -- and an unready environment is exactly when someone is
+	// comparing two dashboards trying to tell which one is broken.
+	if !strings.Contains(resp.Body, `"account"`) {
+		t.Fatal("the unready response must name the account, like the healthy one does")
+	}
 }

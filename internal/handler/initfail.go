@@ -40,8 +40,14 @@ func UnreadyResponse(req events.APIGatewayProxyRequest, initErr error) ([]byte, 
 		"ok":     false,
 		"ready":  false,
 		"reason": initErr.Error(),
-		"env":    os.Getenv("RARC_ENV"),
-		"commit": os.Getenv("RELEASEBOT_COMMIT"),
+		// ⚠️ THE ACCOUNT, on the UNREADY path too. This response is built by
+		// hand rather than by the normal health handler, so it silently lacked
+		// the one field that says WHICH environment is unready -- and an
+		// unready environment is exactly when someone is looking at two
+		// dashboards trying to work out which one is broken.
+		"account": os.Getenv("RELEASEBOT_ACCOUNT_LABEL"),
+		"env":     os.Getenv("RARC_ENV"),
+		"commit":  os.Getenv("RELEASEBOT_COMMIT"),
 		"hint": "configuration resolved at INIT is incomplete. This is not a crash: " +
 			"the function is refusing to serve rather than running without credentials.",
 	})

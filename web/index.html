@@ -69,6 +69,13 @@
   .row span:first-child{color:var(--muted)}
   .pill{font-family:var(--display); font-size:10.5px; font-weight:600; letter-spacing:.08em;
         text-transform:uppercase; padding:3px 8px; border-radius:2px}
+  /* The account label, in the masthead. Deliberately loud: it is the one thing
+     that distinguishes two otherwise identical dashboards. */
+  .envbadge{display:inline-block; margin-top:8px; font-family:var(--display);
+            font-size:12.5px; font-weight:700; letter-spacing:.06em;
+            text-transform:uppercase; padding:5px 11px; border-radius:5px;
+            background:var(--signal); color:var(--surface)}
+  .envbadge.unlabelled{background:var(--blocking)}
   .pill.ok{background:var(--clear-soft); color:var(--clear)}
   .pill.held{background:var(--warn-soft); color:var(--warn)}
   .pill.bad{background:var(--blocking-soft); color:var(--blocking)}
@@ -361,6 +368,13 @@
       <div>
         <span class="lbl">ReleaseBot · environment status</span>
         <h1>What is running, right now</h1>
+        <!-- ⛔ THE ACCOUNT LABEL BELONGS HERE, not in the footer. Two
+             environments produce two dashboards identical in every other
+             respect; the one fact a reader needs first is WHICH ONE THIS IS.
+             Filled from the RUNNING functions' /health, not from how this page
+             was configured -- if those disagree, the dashboard is pointed
+             somewhere other than where it believes. -->
+        <div id="envbadge" class="envbadge">reading…</div>
       </div>
       <div style="display:flex; gap:10px; align-items:center">
         <span class="mono" id="who" style="font-size:12px; color:var(--muted)"></span>
@@ -1284,9 +1298,15 @@ function render(d){
   // dashboards that are otherwise identical, and a 12-digit account id is not
   // something a human distinguishes at a glance under pressure.
   const label = d.accountLabel || 'unlabelled';
-  document.getElementById('acct').innerHTML =
-    `<strong>${esc(label)}</strong> · account ${esc(d.account)} · ${esc(d.region)}`;
-  // And put it in the tab title, so two open tabs are tellable apart.
+  const badge = document.getElementById('envbadge');
+  badge.textContent = label + ' · ' + esc(d.account);
+  // ⚠️ An unlabelled environment is drawn as a PROBLEM, not as neutral. The
+  // whole point is that an unnamed account is the dangerous state.
+  badge.classList.toggle('unlabelled', label === 'unlabelled');
+  document.getElementById('acct').textContent =
+    'account ' + esc(d.account) + ' · ' + esc(d.region);
+  // And the tab title, so two open dashboards are tellable apart from the tab
+  // strip alone -- which is how they will actually be used.
   document.title = label + ' · ReleaseBot';
 }
 
