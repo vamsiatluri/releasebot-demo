@@ -110,7 +110,7 @@ rather than to the code.
 
 `scripts/bootstrap.sh` was written from a working account and had never been run against
 nothing. Its first execution in a brand-new AWS account (450315222669, created for this)
-found **ten real defects in a row**, none of which could surface anywhere else.
+found **eleven real defects in a row**, none of which could surface anywhere else.
 
 | # | What happened | Why only an empty account shows it |
 |---|---|---|
@@ -300,9 +300,35 @@ It now covers DynamoDB, SQS, Cognito, CloudFront, WAF, NAT gateways, VPC endpoin
 non-default VPCs and SSM parameters, and deletes the retained ledger table explicitly,
 since no stack delete ever will.
 
+And then the fixed teardown found an eleventh, in the same family. `releasebot-dashboard`
+hit **`DELETE_FAILED`** while every other stack deleted cleanly:
+
+```
+The following resource(s) failed to delete: [SiteBucket].
+"The bucket you tried to delete is not empty (Status Code: 409)"
+```
+
+**CloudFormation cannot delete a non-empty bucket and will not empty one for you.** The
+script emptied the *artifact* bucket, and did it **after** the stack deletes — so the
+dashboard's own site bucket was never touched and the stack delete failed on it.
+
+Two things wrong, and the second is the subtler one:
+
+- order — a teardown must empty every bucket it is about to delete **before** it deletes
+  anything;
+- `aws s3 rm --recursive` removes **current objects only**. A versioned bucket keeps the
+  old versions plus a delete marker per removed object, and a bucket holding either is not
+  empty — so `s3 ls` reports an empty bucket that S3 refuses to delete. `_empty-bucket.py`
+  pages through `list-object-versions` and removes versions and delete markers.
+
+★ Three of the eleven (#5, #9, #11) are the same mistake in different clothes:
+**trusting an operation's report instead of reading the resulting state.** The content key
+that was uploaded but never referenced, the version that was published but never pointed
+at, the bucket that was emptied but not of its versions.
+
 ★ The lesson: **a build script written against an account that already has everything has
-never been tested.** All ten were invisible in the account it was written in, and each of
-the last four was invisible even in the empty one until the one before it was fixed —
+never been tested.** All eleven were invisible in the account it was written in, and each of
+the last five was invisible even in the empty one until the one before it was fixed —
 defects queue up behind one another, so a single run that goes green start to finish proves
 more than any amount of re-reading. #9 in particular could not be found by review at all:
 the template was valid, the deploy succeeded, and the wrong code was serving.

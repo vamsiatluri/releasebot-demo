@@ -32,6 +32,28 @@ STACKS=(releasebot-dashboard releasebot-slack-approve releasebot-observability
         releasebot-edge2 releasebot-edge releasebot-apigw releasebot-api
         releasebot-probe releasebot-lambda releasebot-network releasebot-iam)
 
+# ⛔ EMPTY THE BUCKETS FIRST. CloudFormation cannot delete a non-empty bucket,
+# and it does not empty one for you -- it just fails the stack delete with a
+# 409. This script emptied only the ARTIFACT bucket, and did it AFTER the stack
+# deletes, so the dashboard stack died on its own site bucket with
+# DELETE_FAILED while every other stack went cleanly. A teardown has to empty
+# every bucket it is about to delete, before it deletes anything.
+#
+# ⚠️ Versioning: `s3 rm --recursive` removes current objects but leaves old
+# versions and delete markers, and a bucket holding either is still not empty.
+empty_bucket() {
+  local b="$1"
+  aws s3api head-bucket --bucket "$b" 2>/dev/null || return 0
+  echo "  emptying $b"
+  aws s3 rm "s3://$b" --recursive --only-show-errors 2>/dev/null || true
+  # Old versions and delete markers, in pages. Without this a versioned bucket
+  # looks empty to `s3 ls` and still refuses to delete.
+  python3 scripts/_empty-bucket.py "$b" || true
+}
+for b in $(aws s3api list-buckets --query 'Buckets[?contains(Name,`releasebot`)].Name' --output text 2>/dev/null); do
+  empty_bucket "$b"
+done
+
 for s in "${STACKS[@]}"; do
   if aws cloudformation describe-stacks --stack-name "$s" >/dev/null 2>&1; then
     echo "  deleting stack $s"
@@ -83,11 +105,13 @@ done
 
 # S3 last: the Lambda stack reads from it, and a bucket with versioning on is not
 # emptied by deleting objects -- the delete markers and old versions remain.
-if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
-  echo "  emptying and deleting $BUCKET"
-  aws s3 rm "s3://$BUCKET" --recursive --only-show-errors || true
-  aws s3api delete-bucket --bucket "$BUCKET" || true
-fi
+# They were emptied before the stack deletes (above). Anything a stack did not
+# own is removed here.
+for b in $(aws s3api list-buckets --query 'Buckets[?contains(Name,`releasebot`)].Name' --output text 2>/dev/null); do
+  echo "  deleting bucket $b"
+  empty_bucket "$b"
+  aws s3api delete-bucket --bucket "$b" 2>/dev/null || true
+done
 
 echo
 echo "=============== VERIFYING ==============="
