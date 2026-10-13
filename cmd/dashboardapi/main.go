@@ -69,7 +69,11 @@ type health struct {
 	// exactly the kind of optional control that is never switched on if nothing
 	// ever says it is off.
 	CutAllowlist string `json:"cutAllowlist,omitempty"`
-	Error        string `json:"error,omitempty"`
+	// ⛔ WHICH DEPLOYMENT this is. Two environments produce two dashboards that
+	// look identical, and a reader who cannot tell them apart is the same
+	// hazard as two identical approve buttons in one Slack channel.
+	Account string `json:"account,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 // A step inside a job. This is the detail GitHub's own run page shows only
@@ -182,17 +186,22 @@ type alarm struct {
 }
 
 type payload struct {
-	Account  string            `json:"account"`
-	Region   string            `json:"region"`
-	ReadAt   string            `json:"readAt"`
-	Pairs    []pair            `json:"pairs"`
-	Health   []health          `json:"health"`
-	InSync   bool              `json:"inSync"`
-	Run      *runState         `json:"run,omitempty"`
-	Rollback []rollbackTargets `json:"rollback,omitempty"`
-	Releases []release         `json:"releases,omitempty"`
-	Platform *platform         `json:"platform,omitempty"`
-	Notes    []string          `json:"notes"`
+	Account string `json:"account"`
+	Region  string `json:"region"`
+	ReadAt  string `json:"readAt"`
+	// The account LABEL as the RUNNING functions report it -- not as the
+	// dashboard was configured. ⚠️ Deliberately distinct from Account above,
+	// which is the 12-digit AWS id: if the two disagree, the dashboard is
+	// pointed somewhere other than where it thinks it is.
+	AccountLabel string            `json:"accountLabel,omitempty"`
+	Pairs        []pair            `json:"pairs"`
+	Health       []health          `json:"health"`
+	InSync       bool              `json:"inSync"`
+	Run          *runState         `json:"run,omitempty"`
+	Rollback     []rollbackTargets `json:"rollback,omitempty"`
+	Releases     []release         `json:"releases,omitempty"`
+	Platform     *platform         `json:"platform,omitempty"`
+	Notes        []string          `json:"notes"`
 }
 
 func main() {
@@ -291,6 +300,12 @@ func build(ctx context.Context) payload {
 
 	// The controls around the release, not the release itself.
 	out.Platform = readPlatform(ctx)
+	for _, h := range out.Health {
+		if h.Account != "" {
+			out.AccountLabel = h.Account
+			break
+		}
+	}
 
 	out.InSync = true
 	for _, p := range out.Pairs {
@@ -382,6 +397,7 @@ func readHealth(ctx context.Context, base, stage string) health {
 		ConfigSource string `json:"configSource"`
 		SecretSource string `json:"secretSource"`
 		CutAllowlist string `json:"cutAllowlist"`
+		Account      string `json:"account"`
 	}
 	if err := json.Unmarshal(raw, &got); err != nil {
 		h.Error = fmt.Sprintf("HTTP %d, unparseable", resp.StatusCode)
@@ -390,6 +406,7 @@ func readHealth(ctx context.Context, base, stage string) health {
 	h.OK, h.Env, h.Commit, h.Built = got.OK, got.Env, got.Commit, got.Built
 	h.ConfigSource, h.SecretSource = got.ConfigSource, got.SecretSource
 	h.CutAllowlist = got.CutAllowlist
+	h.Account = got.Account
 	return h
 }
 

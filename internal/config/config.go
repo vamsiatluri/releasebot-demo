@@ -52,6 +52,16 @@ type Config struct {
 	// true of the mechanism and false of most of the values.
 	DefaultOwner string
 	SlackChannel string
+
+	// ⛔ THE ACCOUNT, not the stage. RARC_ENV is prod|test -- which STAGE of one
+	// deployment this is. AccountLabel names WHICH DEPLOYMENT: prod-demo,
+	// prod-assess, msnbc-prod.
+	//
+	// Two accounts running this bot post to the SAME Slack channel through the
+	// SAME app, so two "approve" buttons can sit in the channel looking
+	// identical while pointing at different AWS accounts. A person clicking one
+	// cannot tell. Every message and every health response carries this.
+	AccountLabel string
 	AckOnly      bool
 
 	GitHubToken        string
@@ -124,6 +134,7 @@ func Load(ctx context.Context, resolve SecretResolver) (Config, error) {
 		DefaultOwner:   os.Getenv("DEFAULT_OWNER"),
 		CutAllowlist:   splitList(os.Getenv("RELEASEBOT_CUT_ALLOWLIST")),
 		SlackChannel:   os.Getenv("SLACK_CHANNEL"),
+		AccountLabel:   envOr("RELEASEBOT_ACCOUNT_LABEL", "unlabelled"),
 		AckOnly:        os.Getenv("RELEASEBOT_ACK_ONLY") == "1",
 		GitHubAPI:      envOr("RELEASEBOT_GITHUB_API_URL", "https://api.github.com"),
 		SlackAPI:       envOr("SLACK_API_URL", "https://slack.com/api"),
@@ -245,6 +256,7 @@ func (c Config) WithParameters(v map[string]string) Config {
 	set(&c.DefaultBranch, "default-branch")
 	set(&c.DefaultOwner, "default-owner")
 	set(&c.SlackChannel, "slack-channel")
+	set(&c.AccountLabel, "account-label")
 	set(&c.ConfigURL, "config-url")
 	set(&c.GitHubAPI, "github-api-url")
 	set(&c.SlackAPI, "slack-api-url")

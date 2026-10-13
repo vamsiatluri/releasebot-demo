@@ -76,6 +76,9 @@ Parameters:
       Set it with scripts/set-approval-token.sh, which refuses fine-grained
       tokens outright.
   LogRetentionDays: {Type: Number, Default: 7}
+  # See 20-lambda.yaml: names the ACCOUNT so the approval REPLY says what it
+  # just deployed to. Two environments share one Slack app.
+  AccountLabel: {Type: String, Default: unlabelled}
   ReservedConcurrency:
     Type: Number
     Default: 2
@@ -190,6 +193,7 @@ Resources:
           GITHUB_REPO: !Ref GitHubRepo
           GITHUB_ENVIRONMENT_ID: !Ref GitHubEnvironmentId
           SLACK_APPROVERS: !Ref SlackApprovers
+          RELEASEBOT_ACCOUNT_LABEL: !Ref AccountLabel
 
   SlackResource:
     Type: AWS::ApiGateway::Resource

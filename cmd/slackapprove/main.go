@@ -61,6 +61,7 @@ func main() {
 		Repo:          os.Getenv("GITHUB_REPO"),
 		EnvironmentID: envID,
 		Approvers:     split(os.Getenv("SLACK_APPROVERS")),
+		AccountLabel:  os.Getenv("RELEASEBOT_ACCOUNT_LABEL"),
 	}
 
 	runtime.Start(func(ctx context.Context, inv runtime.Invocation, p []byte) ([]byte, error) {

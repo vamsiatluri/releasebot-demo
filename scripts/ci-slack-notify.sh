@@ -33,6 +33,16 @@ fi
 
 PROD_HEALTH="${PROD_HEALTH_URL:-}"
 
+# ⛔ WHICH ACCOUNT THIS IS ABOUT. Two environments running this bot post to the
+# same channel through the same Slack app, so two approve buttons can sit side
+# by side looking identical while pointing at different AWS accounts. A person
+# clicking one cannot tell them apart, and an approval is a production deploy.
+#
+# ⚠️ "unlabelled" rather than a guess. A message that silently claims the wrong
+# account is worse than one that admits it does not know.
+ACCOUNT="${RELEASEBOT_ACCOUNT_LABEL:-unlabelled}"
+BADGE="\`${ACCOUNT}\`"
+
 case "$STATUS" in
   awaiting)
     # ⛔ NAME WHAT THIS RUN KILLED. cancel-in-progress means a newer push
@@ -51,14 +61,14 @@ case "$STATUS" in
       SUPERSEDE="
 :warning: *This replaces ${SUPERSEDED}*, which was waiting for approval and has been cancelled. The approval button on that message no longer does anything — approve *this* one."
     fi
-    TEXT=":hourglass_flowing_sand: *ReleaseBot — waiting for your approval*
+    TEXT=":hourglass_flowing_sand: *ReleaseBot — waiting for your approval*  ·  ${BADGE}
 
 *Run #${RUN_NUMBER:-?}* · commit \`${COMMIT}\` built and passed every check on *test*. Production has *not* been touched, and will not be until someone approves.
 
 Approving promotes the artifact that was just tested — no rebuild happens, so what ships is what passed.${SUPERSEDE}"
     ;;
   promoted)
-    TEXT=":white_check_mark: *ReleaseBot — promoted to production*
+    TEXT=":white_check_mark: *ReleaseBot — promoted to production*  ·  ${BADGE}
 
 *Run #${RUN_NUMBER:-?}* · commit \`${COMMIT}\`, approved by *${ACTOR}*.
 
@@ -69,7 +79,7 @@ Approving promotes the artifact that was just tested — no rebuild happens, so 
 Production and test report the *same code fingerprint*. Nothing was rebuilt between them, so what shipped is what was tested."
     ;;
   failed)
-    TEXT=":x: *ReleaseBot — release failed*
+    TEXT=":x: *ReleaseBot — release failed*  ·  ${BADGE}
 
 *Run #${RUN_NUMBER:-?}* · commit \`${COMMIT}\`. Production was *not* updated; whatever was live is still live.
 
@@ -79,7 +89,7 @@ The rollback path is unchanged: the previous version is still published and the 
     # A rollback is the one release event that MUST be loud. It happens under
     # pressure, usually by one person, and it is the change most likely to be
     # discovered later by somebody who was not told.
-    TEXT=":rewind: *ReleaseBot — production rolled back*
+    TEXT=":rewind: *ReleaseBot — production rolled back*  ·  ${BADGE}
 
 Both functions moved to commit \`${COMMIT}\`, by *${ACTOR}*.
 
@@ -111,13 +121,17 @@ fi
 # latest pending run" would approve whatever happened to be waiting when
 # somebody got round to clicking.
 PAYLOAD=$(
-  TEXT="$TEXT" STATUS="$STATUS" RUN_URL="$RUN_URL" RUN_ID="$RUN_ID" \
+  TEXT="$TEXT" STATUS="$STATUS" RUN_URL="$RUN_URL" RUN_ID="$RUN_ID" ACCOUNT="$ACCOUNT" \
   python3 -c '
 import json, os
 text   = os.environ["TEXT"]
-status = os.environ["STATUS"]
-url    = os.environ.get("RUN_URL", "")
-run_id = os.environ.get("RUN_ID", "")
+status  = os.environ["STATUS"]
+url     = os.environ.get("RUN_URL", "")
+run_id  = os.environ.get("RUN_ID", "")
+# ⛔ The confirm dialog is the LAST thing a person reads before production
+# changes. With two accounts posting to one channel, "Deploy to production?"
+# is ambiguous at exactly the moment ambiguity is most expensive.
+account = os.environ.get("ACCOUNT", "unlabelled")
 
 if status != "awaiting" or not run_id:
     print(json.dumps({"text": text}))
@@ -130,8 +144,11 @@ buttons = [{
     # A confirm step on a button that ships to production. One stray click in a
     # chat window should not be a release.
     "confirm": {
-        "title":   {"type": "plain_text", "text": "Deploy to production?"},
-        "text":    {"type": "mrkdwn", "text": "This promotes the tested artifact to production immediately."},
+        "title":   {"type": "plain_text", "text": "Deploy to %s?" % account},
+        "text":    {"type": "mrkdwn", "text":
+                    "This promotes the tested artifact to production in *%s* immediately.\n"
+                    "⚠️ Check the account name — more than one environment posts to this channel."
+                    % account},
         "confirm": {"type": "plain_text", "text": "Deploy"},
         "deny":    {"type": "plain_text", "text": "Cancel"},
     },

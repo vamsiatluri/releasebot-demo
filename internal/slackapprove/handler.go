@@ -74,6 +74,12 @@ type Config struct {
 	// failing closed, because an empty allowlist read as "allow all" would turn
 	// a misconfiguration into an open door on a public endpoint.
 	Approvers []string
+
+	// ⛔ Which AWS account this endpoint acts on. Two environments post to the
+	// same Slack channel through the same app, so the REPLY must say what was
+	// just changed -- otherwise the only record a human sees of a production
+	// deploy does not name the production it deployed to.
+	AccountLabel string
 }
 
 // Interaction is the slice of Slack's block_actions payload we need.
@@ -174,7 +180,7 @@ func (c Config) Handle(ctx context.Context, rawBody []byte, signature, timestamp
 				past, in.User.ID, runID)}
 	}
 	return Result{Status: 200, Body: "", ResponseURL: in.ResponseURL,
-		Message: fmt.Sprintf(":white_check_mark: Approved by <@%s>. Run `%s` is deploying to production now.",
+		Message: fmt.Sprintf(":white_check_mark: Approved by <@%s>. Run `%s` is deploying to production now in `"+c.label()+"`.",
 			in.User.ID, runID)}
 }
 
@@ -232,4 +238,13 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// label never returns empty: a reply that omits the account is the failure this
+// field exists to prevent, so an unset value says so out loud.
+func (c Config) label() string {
+	if strings.TrimSpace(c.AccountLabel) == "" {
+		return "unlabelled account"
+	}
+	return c.AccountLabel
 }

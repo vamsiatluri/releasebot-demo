@@ -44,12 +44,19 @@ while [ $# -gt 0 ]; do
     --no-nat)       NAT="false"; shift ;;
     --no-endpoints) ENDPOINTS="false"; shift ;;
     --skip-preflight) SKIP_PREFLIGHT=1; shift ;;
+    --label)        ACCOUNT_LABEL="$2"; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
-[ -n "$PROFILE" ] || { echo "usage: $0 --profile <aws-profile> --owner <gh-owner> --repo <gh-repo> [...]" >&2; exit 2; }
+[ -n "$PROFILE" ] || { echo "usage: $0 --profile <aws-profile> --owner <gh-owner> --repo <gh-repo> [--label <name>] [...]" >&2; exit 2; }
 [ -n "$OWNER" ] && [ -n "$REPO" ] || { echo "--owner and --repo are required (they go in the OIDC trust policy)" >&2; exit 2; }
 [ "$NETWORK_MODE" = "existing" ] && [ -z "$SUBNETS" ] && { echo "--vpc needs --subnets" >&2; exit 2; }
+
+# ⛔ The account's human name, printed on every Slack message and reported on
+# /health. Defaults to the PROFILE rather than to "unlabelled": a wrong-looking
+# label gets fixed, an absent one gets ignored, and the whole point is that two
+# accounts posting to one Slack channel must be distinguishable at the click.
+ACCOUNT_LABEL="${ACCOUNT_LABEL:-$PROFILE}"
 
 export AWS_PROFILE="$PROFILE" AWS_REGION="$REGION" AWS_PAGER=""
 step() { printf '\n\033[1m── %s\033[0m\n' "$*"; }
@@ -69,7 +76,7 @@ else
   RESERVED="${RESERVED_CONCURRENCY:-5}"
 fi
 BUCKET="releasebot-artifacts-$ACCT"
-echo "account $ACCT · region $REGION · repo $OWNER/$REPO · network: $NETWORK_MODE"
+echo "account $ACCT ($ACCOUNT_LABEL) · region $REGION · repo $OWNER/$REPO · network: $NETWORK_MODE"
 
 # ── 0. preflight ────────────────────────────────────────────────────────────
 if [ "$SKIP_PREFLIGHT" = "0" ]; then
@@ -151,6 +158,29 @@ make package >/dev/null || die "make package failed"
 # -- which nothing had ever uploaded. The stack failed with NoSuchKey naming a
 # key that looks plausible, four steps away from the loop that was supposed to
 # write it. `make package` had been building the zip the whole time.
+# ⛔ slackapprove IS BUILT HERE, NOT READ FROM build/.
+#
+# Two fixes made earlier today contradicted each other, and this is where they
+# collided:
+#   - bootstrap was reading build/slackapprove.zip, added because the approval
+#     stack was being created with a key nothing had uploaded (NoSuchKey);
+#   - `make package` now DELETES build/slackapprove.zip, added because a stale
+#     copy of it sat there for weeks and got hand-uploaded, deploying code that
+#     predated the secret resolver.
+# Each fix was right on its own. Together the second removed the file the first
+# depended on, and bootstrap died at step 4.
+#
+# ★ The resolution is not to pick one: it is to stop relying on a file that may
+# or may not be current. Build it, here, from source, every time. The stack
+# needs a real S3 key before it can create the function, so this cannot be
+# deferred to deploy-slack-approve.sh.
+SA_WORK=$(mktemp -d); trap 'rm -rf "$SA_WORK"' EXIT
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -trimpath -ldflags="-s -w" -o "$SA_WORK/bootstrap" ./cmd/slackapprove \
+  || die "could not build cmd/slackapprove"
+( cd "$SA_WORK" && zip -q -X slackapprove.zip bootstrap )
+cp "$SA_WORK/slackapprove.zip" "build/slackapprove.zip"
+
 CUT_KEY=""; MERGE_KEY=""; APPROVE_KEY=""
 for ART in cutrelease mergeback slackapprove; do
   [ -f "build/$ART.zip" ] || die "make package did not produce build/$ART.zip"
@@ -210,6 +240,7 @@ for attempt in 1 2 3 4 5 6; do
       "CutReleaseTestRoleArn=arn:aws:iam::$ACCT:role/releasebot-exec-cutrelease-test" \
       "MergebackTestRoleArn=arn:aws:iam::$ACCT:role/releasebot-exec-mergeback-test" \
       "VpcSubnetIds=$VPC_SUBNETS" "VpcSecurityGroupIds=$VPC_SG" \
+      "AccountLabel=$ACCOUNT_LABEL" \
       "ReservedConcurrency=$RESERVED" 2>&1 | tail -3; then
     break
   fi
@@ -346,7 +377,7 @@ else:
     "ArtifactBucket=$BUCKET" "ArtifactKey=$APPROVE_KEY" \
     "RestApiId=$API_ID" "BetaResourceId=$BETA_ID" StageName=prod \
     "SlackApprovers=$APPROVERS" "GitHubOwner=$OWNER" "GitHubRepo=$REPO" \
-    "GitHubEnvironmentId=$ENV_ID" \
+    "GitHubEnvironmentId=$ENV_ID" "AccountLabel=$ACCOUNT_LABEL" \
     "SlackSigningSecret=@SIGNING" "GitHubApprovalToken=@APPROVAL" \
     "VpcSubnetIds=$VPC_SUBNETS" "VpcSecurityGroupIds=$VPC_SG" \
     "ReservedConcurrency=$(if [ "$RESERVED" = 0 ]; then echo 0; else echo 2; fi)" \

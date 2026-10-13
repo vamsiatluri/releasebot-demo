@@ -1019,6 +1019,57 @@ scripts/slash.sh cut ...     # a signed command does real work</code></pre>
          <code>IncludeBody</code> gets up to 40&nbsp;KB — and is probably not worth the
          complexity against a WAF rule that simply requires the signature header to be present.</p>
 
+      <h3>What is actually in the VPC — four functions, two network interfaces</h3>
+      <p>Read from the live account, because the names mislead:</p>
+      <div class="tblwrap"><table class="tbl">
+        <thead><tr><th>Count</th><th>Type</th><th>What it is</th><th>Security group</th></tr></thead>
+        <tbody>
+          <tr><td>2</td><td><code>lambda</code></td><td><code>AWS Lambda VPC ENI-…</code>, one per availability zone</td><td>the Lambda SG</td></tr>
+          <tr><td>4</td><td><code>vpc_endpoint</code></td><td>two interface endpoints × two AZs</td><td>the endpoint SG</td></tr>
+          <tr><td>1</td><td><code>nat_gateway</code></td><td>in the <em>public</em> subnet</td><td><strong>none</strong> — NAT gateways take no SG</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="flag hard"><strong>⚠️ The Lambda ENI's name is misleading, and it matters.</strong>
+        <p>It reads <code>ENI-releaseAutomationMergeback</code>, which looks function-specific.
+        It is not. <strong>A Lambda VPC ENI is shared by every function with the same
+        (subnet set + security group set)</strong> — the description merely names whichever
+        function caused it to be created first.</p>
+        <p>Four functions are attached here —
+        <code>cutRelease</code>, <code>releaseAutomationMergeback</code>,
+        <code>slackApprove</code> and the dashboard API — all with identical subnets and SG.
+        So there are <strong>two</strong> interfaces, one per AZ, not eight.</p>
+      </div>
+
+      <h4>Who creates them, and who may delete them</h4>
+      <div class="tblwrap"><table class="tbl">
+        <thead><tr><th>ENI</th><th>Requester</th><th><code>RequesterManaged</code></th></tr></thead>
+        <tbody>
+          <tr><td>Lambda</td><td>an <strong>assumed-role session</strong> — Lambda assuming the function's own execution role</td><td><strong>false</strong></td></tr>
+          <tr><td>VPC endpoint</td><td>an AWS service account</td><td>true</td></tr>
+          <tr><td>NAT gateway</td><td>an AWS service account</td><td>true</td></tr>
+        </tbody>
+      </table></div>
+      <p>None of them is attached to an EC2 instance — every <code>Attachment</code> reads
+         <code>amazon-aws</code>, meaning AWS-managed infrastructure: Lambda's Hyperplane fleet,
+         the endpoint service, the NAT gateway. The account <em>owns</em> them; AWS
+         <em>holds</em> them.</p>
+      <p>★ That the Lambda ENI is requested by <strong>an assumed session of the function's own
+         execution role</strong> is why <code>AWSLambdaVPCAccessExecutionRole</code> must be on
+         the role <em>before</em> a function can be VPC-attached — and why omitting it fails
+         with an error naming <code>CreateNetworkInterface</code> rather than naming the policy.</p>
+
+      <div class="flag"><strong>And this is what broke the teardown.</strong>
+        <code>RequesterManaged: false</code> on the Lambda ENIs means they are yours to delete,
+        which is what the teardown's reaper does. The endpoint and NAT ENIs are
+        <code>true</code> — they go only when the endpoint or NAT goes. So a teardown has two
+        different jobs, and getting that wrong leaves a detached interface holding a subnet
+        hostage with an error that blames the subnet.
+        <p>⚠️ One practical consequence: <strong>a fifth VPC function costs no new interfaces</strong>
+        if it uses the same subnets and SG. Change either and you get a fresh pair — plus the
+        old pair lingering until Lambda reaps them.</p>
+      </div>
+
       <h3>⛔ The biggest hole was not the network. It was the secrets.</h3>
       <p>The Slack signing secret and a 93-character GitHub token were <strong>plaintext Lambda
          environment variables</strong> across five functions, with no customer-managed key.
@@ -1229,7 +1280,14 @@ function render(d){
     </div>`).join('');
 
   document.getElementById('stamp').textContent = 'read live ' + esc(d.readAt);
-  document.getElementById('acct').textContent  = 'account ' + esc(d.account) + ' · ' + esc(d.region);
+  // ⛔ THE LABEL FIRST, then the number. Two environments produce two
+  // dashboards that are otherwise identical, and a 12-digit account id is not
+  // something a human distinguishes at a glance under pressure.
+  const label = d.accountLabel || 'unlabelled';
+  document.getElementById('acct').innerHTML =
+    `<strong>${esc(label)}</strong> · account ${esc(d.account)} · ${esc(d.region)}`;
+  // And put it in the tab title, so two open tabs are tellable apart.
+  document.title = label + ' · ReleaseBot';
 }
 
 async function load(){

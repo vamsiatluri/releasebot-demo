@@ -96,9 +96,10 @@ func (h *Handler) Handle(ctx context.Context, req events.APIGatewayProxyRequest)
 		// from outside, which is how a half-finished rollout looks finished.
 		return events.JSON(200, fmt.Sprintf(
 			`{"ok":true,"env":%q,"action":%q,"stage":%q,"commit":%q,"built":%q,`+
-				`"configSource":%q,"configPath":%q,"secretSource":%q,"cutAllowlist":%q,`+
+				`"account":%q,"configSource":%q,"configPath":%q,"secretSource":%q,"cutAllowlist":%q,`+
 				`"defaultOwner":%q,"defaultBranch":%q,"slackChannel":%q,"datadogService":%q}`,
 			h.Cfg.Env, h.Action, req.RequestContext.Stage, BuildCommit, BuildTime,
+			h.Cfg.AccountLabel,
 			h.Cfg.ConfigSource, h.Cfg.ConfigPath, secretSource(), h.Cfg.CutAllowlistState(),
 			h.Cfg.DefaultOwner, h.Cfg.DefaultBranch, h.Cfg.SlackChannel, h.Cfg.DatadogService))
 	}

@@ -75,6 +75,16 @@ Parameters:
   SlackChannel:       {Type: String, Default: ''}
   SecretsPrefix:      {Type: String, Default: 'releasebot'}
 
+  # ⛔ WHICH ACCOUNT, not which stage. RARC_ENV is prod|test. This names the
+  # DEPLOYMENT: prod-demo, prod-assess, msnbc-prod. Two accounts running this
+  # bot post to the same Slack channel through the same app, so two approve
+  # buttons can look identical while pointing at different AWS accounts.
+  # Reported on /health and printed on every Slack message.
+  AccountLabel:
+    Type: String
+    Default: unlabelled
+    Description: Human name for THIS account, e.g. prod-demo or prod-assess.
+
   # Slack user IDs permitted to run /cut and /merge.
   # ⛔ EMPTY = UNRESTRICTED, which is the OPPOSITE of SlackApprovers, where
   # empty means NOBODY. Deliberate: asking for a release branch is low-risk and
@@ -285,6 +295,7 @@ Resources:
           DEFAULT_OWNER: !Ref DefaultOwner
           SLACK_CHANNEL: !Ref SlackChannel
           RELEASEBOT_CUT_ALLOWLIST: !Ref CutAllowlist
+          RELEASEBOT_ACCOUNT_LABEL: !Ref AccountLabel
           SECRETS_PREFIX: !Sub '${SecretsPrefix}/prod'
           RELEASEBOT_ACK_ONLY: '1'
           DD_SERVICE: releasebot
@@ -351,6 +362,7 @@ Resources:
           DEFAULT_OWNER: !Ref DefaultOwner
           SLACK_CHANNEL: !Ref SlackChannel
           RELEASEBOT_CUT_ALLOWLIST: !Ref CutAllowlist
+          RELEASEBOT_ACCOUNT_LABEL: !Ref AccountLabel
           SECRETS_PREFIX: !Sub '${SecretsPrefix}/test'
           RELEASEBOT_ACK_ONLY: '1'
           DD_SERVICE: releasebot
@@ -403,6 +415,7 @@ Resources:
           DEFAULT_OWNER: !Ref DefaultOwner
           SLACK_CHANNEL: !Ref SlackChannel
           RELEASEBOT_CUT_ALLOWLIST: !Ref CutAllowlist
+          RELEASEBOT_ACCOUNT_LABEL: !Ref AccountLabel
           SECRETS_PREFIX: !Sub '${SecretsPrefix}/prod'
           RELEASEBOT_ACK_ONLY: '1'
           DD_SERVICE: releasebot
@@ -458,6 +471,7 @@ Resources:
           DEFAULT_OWNER: !Ref DefaultOwner
           SLACK_CHANNEL: !Ref SlackChannel
           RELEASEBOT_CUT_ALLOWLIST: !Ref CutAllowlist
+          RELEASEBOT_ACCOUNT_LABEL: !Ref AccountLabel
           SECRETS_PREFIX: !Sub '${SecretsPrefix}/test'
           RELEASEBOT_ACK_ONLY: '1'
           DD_SERVICE: releasebot
