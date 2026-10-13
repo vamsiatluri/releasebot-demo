@@ -57,7 +57,14 @@ type health struct {
 	Env    string `json:"env"`
 	Commit string `json:"commit"`
 	Built  string `json:"built"`
-	Error  string `json:"error,omitempty"`
+	// ⚠️ WHERE the running function got its configuration and its SECRETS,
+	// reported as a mechanism and never as a value. Without these two a
+	// hardened function is indistinguishable from one holding plaintext
+	// secrets in its environment, short of reading the secrets -- which is
+	// precisely how a half-finished rollout reads as finished.
+	ConfigSource string `json:"configSource,omitempty"` // ssm | env
+	SecretSource string `json:"secretSource,omitempty"` // reference | plaintext | mixed | unset
+	Error        string `json:"error,omitempty"`
 }
 
 // A step inside a job. This is the detail GitHub's own run page shows only
@@ -363,16 +370,19 @@ func readHealth(ctx context.Context, base, stage string) health {
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	var got struct {
-		OK     bool   `json:"ok"`
-		Env    string `json:"env"`
-		Commit string `json:"commit"`
-		Built  string `json:"built"`
+		OK           bool   `json:"ok"`
+		Env          string `json:"env"`
+		Commit       string `json:"commit"`
+		Built        string `json:"built"`
+		ConfigSource string `json:"configSource"`
+		SecretSource string `json:"secretSource"`
 	}
 	if err := json.Unmarshal(raw, &got); err != nil {
 		h.Error = fmt.Sprintf("HTTP %d, unparseable", resp.StatusCode)
 		return h
 	}
 	h.OK, h.Env, h.Commit, h.Built = got.OK, got.Env, got.Commit, got.Built
+	h.ConfigSource, h.SecretSource = got.ConfigSource, got.SecretSource
 	return h
 }
 

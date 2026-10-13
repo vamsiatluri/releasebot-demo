@@ -141,6 +141,18 @@
   .tix span{font-family:var(--mono); font-size:11px; padding:2px 7px; border-radius:3px;
             background:var(--signal-soft); color:var(--signal); border:1px solid var(--rule)}
 
+  /* Tables inside the documentation panels. ⚠️ Always wrapped in an
+     overflow-x container by the markup -- a wide table must scroll inside its
+     own box, never make the page body scroll sideways. */
+  .tblwrap{overflow-x:auto; margin:0 0 16px}
+  .tbl{width:100%; min-width:420px; border-collapse:collapse; font-size:13px}
+  .tbl th{text-align:left; font-family:var(--mono); font-size:10px; letter-spacing:.09em;
+          text-transform:uppercase; color:var(--muted); font-weight:600;
+          padding:0 12px 6px 0; border-bottom:1px solid var(--rule); white-space:nowrap}
+  .tbl td{padding:8px 12px 8px 0; border-bottom:1px solid var(--rule);
+          color:var(--ink-2); vertical-align:top}
+  .tbl tr:last-child td{border-bottom:none}
+  .tbl td:first-child{color:var(--ink); font-weight:600}
   .rel{width:100%; border-collapse:collapse; font-size:12.5px}
   .rel th{text-align:left; font-family:var(--mono); font-size:10px; letter-spacing:.09em;
           text-transform:uppercase; color:var(--muted); font-weight:600;
@@ -362,7 +374,8 @@
     <div class="tabs" role="tablist">
       <button role="tab" id="tab-live"  aria-controls="panel-live"  aria-selected="true">Live</button>
       <button role="tab" id="tab-migrate" aria-controls="panel-migrate" aria-selected="false">Migrating from dev<span class="count">7 phases</span></button>
-      <button role="tab" id="tab-scratch" aria-controls="panel-scratch" aria-selected="false">Building from scratch<span class="count">9 steps · 13 defects</span></button>
+      <button role="tab" id="tab-scratch" aria-controls="panel-scratch" aria-selected="false">Building from scratch<span class="count">9 steps · 15 defects</span></button>
+      <button role="tab" id="tab-secure" aria-controls="panel-secure" aria-selected="false">Securing it<span class="count">4 layers</span></button>
     </div>
 
     <div id="panel-live" role="tabpanel" aria-labelledby="tab-live">
@@ -448,6 +461,15 @@
       <h2>How a change reaches production</h2>
       <p>The real path, end to end, with the artifacts from run 37840483976.</p>
     </div>
+    <div class="flag"><strong>⚠️ This is how ReleaseBot itself gets deployed — not what
+      ReleaseBot does.</strong> Two different pipelines, and they are easy to merge by mistake.
+      The S3 bucket below is where <em>this</em> build stages its binaries.
+      <strong>ReleaseBot touches no S3 and packages nothing:</strong> cutting a release is three
+      GitHub calls — resolve trunk, create <code>release/&lt;version&gt;</code>, write a ledger
+      row — and the mergeback opens the pull request back to trunk. The websites' own deploy
+      pipeline picks up that branch, and <strong>that pipeline is not in scope.</strong>
+      So the blast radius is "a branch is cut in the wrong repository", not "production websites
+      get the wrong bytes".</div>
     <div class="flowwrap">
       <ul class="steps" id="steps"></ul>
       <div class="fdetail">
@@ -654,7 +676,7 @@
       <h3>Building a new environment from nothing</h3>
       <p>One command, nine steps, in an account that has never held any of this. It was
          written from an account that already had everything — and its first run against a
-         genuinely empty one found <strong>thirteen defects in a row</strong>, every one invisible
+         genuinely empty one found <strong>fifteen defects in a row</strong>, every one invisible
          where it was written. It now completes green, start to finish, and the run below is
          the proof rather than the claim.</p>
 
@@ -691,7 +713,7 @@ scripts/bootstrap.sh \
         other's token.</div>
 
       <h3>What an empty account found</h3>
-      <p>Thirteen defects, in the order they surfaced. Each one had to be fixed before the next
+      <p>Fifteen defects, in the order they surfaced. Each one had to be fixed before the next
          became visible — which is why a single run that goes green start to finish proves
          more than any amount of re-reading.</p>
       <ol>
@@ -757,7 +779,21 @@ scripts/bootstrap.sh \
         knew what to remove — which is the argument for writing the check even when you believe
         the cleanup is complete.</div>
 
-      <div class="flag"><strong>Three of the thirteen are the same mistake wearing different
+      <h4>Two more, found by using the thing rather than reading it</h4>
+      <ul>
+        <li><strong>A dry run logged identically to a real one.</strong>
+            <code>cut: release branch ready&nbsp;&nbsp;created=true</code> — with
+            <code>dry_run</code> only on a separate startup line in the same stream. During an
+            incident that log says a branch exists when none does. It now sits on the action
+            line.</li>
+        <li><strong>A teardown-script edit cut a release candidate.</strong> The workflow ignores
+            <code>docs/**</code> but not operator-only scripts, so a commit touching only a local
+            cleanup script and this page cut a release and <em>cancelled a production approval
+            that was waiting</em>. The trigger should be scoped to what changes the deployed
+            artifact.</li>
+      </ul>
+
+      <div class="flag"><strong>Three of the fifteen are the same mistake wearing different
         clothes:</strong> trusting an operation's report instead of reading the resulting
         state. A content-addressed key uploaded but never referenced. A version published but
         never pointed at. A bucket emptied, but not of its versions.</div>
@@ -814,6 +850,168 @@ curl $BASE/prod/beta/health  # the deployed thing answers, and says which commit
 scripts/slash.sh cut ...     # a signed command does real work</code></pre>
       <p>None of those is "the deploy went green". Every one reads the running system.</p>
     </div><!-- /panel-scratch -->
+
+    <div id="panel-secure" role="tabpanel" aria-labelledby="tab-secure" class="doc" hidden>
+      <h3>A public front door, private compute, and a signature as the boundary</h3>
+      <p>The API Gateway is <strong>REGIONAL — public</strong>. That is not an oversight, it is
+         the only shape that can receive a webhook: a <code>PRIVATE</code> REST API is reachable
+         only through an interface VPC endpoint, from inside the VPC, and Slack and GitHub are on
+         the internet. What is private is the <em>compute</em>.</p>
+
+      <div class="flag"><strong>For a webhook receiver the signature is the trust boundary, not
+        the network.</strong> The network controls reduce cost and noise — without them anyone on
+        the internet reaches the endpoint and is rejected, which still costs an invocation and a
+        cold start <em>before</em> the HMAC is checked. They do not replace the signature.</div>
+
+      <h4>The four layers, in the order a request meets them</h4>
+      <ol>
+        <li><strong>WAF on the production stage.</strong> One rule, rate-per-IP, block above 300
+            requests per five minutes. That is abuse protection, not rate limiting — a newsroom
+            cutting releases makes a handful of requests an hour, so anything near 300 is not a
+            person. ⚠️ A web ACL binds to a <em>stage</em>, not an API, so "the API is behind
+            WAF" is not a statement that can be true: production is protected and test is open,
+            deliberately.</li>
+        <li><strong>An IP allowlist</strong> — built, parameterised, and <em>switched off</em>.
+            See the asymmetry below for why.</li>
+        <li><strong>HMAC verification, in the function.</strong> SHA-256 over Slack's base string,
+            compared with a constant-time compare rather than <code>==</code> (which leaks the
+            match position through timing), plus a replay window on the timestamp. Jira uses a
+            shared-secret header. <strong>This is the actual authentication.</strong></li>
+        <li><strong>Private subnets.</strong> Outbound egress via NAT and VPC endpoints; nothing
+            inbound. Nobody reaches the compute — they reach API Gateway, which invokes it.</li>
+      </ol>
+
+      <h3>Two of the three inbound sources are allowlistable. One is not.</h3>
+      <p>Measured from the providers' own published ranges, not assumed:</p>
+      <div class="tblwrap"><table class="tbl">
+        <thead><tr><th>Source</th><th>Published ranges</th><th>Allowlistable</th></tr></thead>
+        <tbody>
+          <tr><td>GitHub webhooks</td><td><strong>9 CIDRs</strong></td><td>✅ trivially</td></tr>
+          <tr><td>Jira Cloud</td><td>Atlassian publishes egress ranges</td><td>✅ yes</td></tr>
+          <tr><td>Slack</td><td>none</td><td>❌ no</td></tr>
+          <tr><td>GitHub Actions runners</td><td><strong>7,036 CIDRs</strong></td><td>❌ why the test stage stays open</td></tr>
+        </tbody>
+      </table></div>
+      <p>So <strong>only the Slack path has to be open to the internet.</strong> That is a
+         concrete recommendation rather than "we should lock it down" — two of three paths can be
+         narrowed at zero behavioural risk. And it explains the shape of the policy: a REST API
+         has exactly <em>one</em> resource policy, so the per-stage split lives in the
+         <code>Resource</code> element.</p>
+
+      <div class="flag hard"><strong>Endpoint type is not reachability</strong>, and conflating
+        them is the mistake worth not making. <code>REGIONAL</code> means public DNS; a resource
+        policy can still refuse every source but CloudFront or a named CIDR. The assess tool now
+        captures the resource policy and the per-stage WAF association for exactly this reason —
+        it used to report the endpoint type and leave the only question that matters to be
+        guessed at.</div>
+
+      <h3>Can Slack talk to a private API? Not directly — and "no way" is still wrong</h3>
+      <p>Three routes exist, and one of them keeps Lambda.</p>
+      <ol>
+        <li><strong>Socket Mode.</strong> The app opens an <em>outbound</em> WebSocket and
+            receives slash commands and button clicks over it. No inbound endpoint at all. ⛔ It
+            needs a long-lived connection, so <strong>ECS/Fargate, not Lambda</strong> — you
+            trade the serverless footprint to delete the public surface.</li>
+        <li><strong>Poll Slack instead. ★ This one keeps Lambda.</strong> Every Slack Web API
+            call is outbound, so a scheduled function needs nothing inbound and no container.
+            ⚠️ The honest catch: a Block Kit button click is delivered <em>only</em> to a request
+            URL or over Socket Mode. So polling cannot carry the approve button — but it can
+            carry an <strong>emoji reaction</strong>, which is attributed, timestamped, and sits
+            permanently in the channel beside the request. Arguably a better audit record than a
+            button press.</li>
+        <li><strong>Front the private API with CloudFront or an ALB.</strong> Buys WAF and Shield
+            at the edge and an API unreachable directly — but <strong>moves</strong> the public
+            surface rather than removing it.</li>
+      </ol>
+      <p>Two that sound right and cannot work: a <code>REQUEST</code> Lambda authorizer
+         <strong>never receives the request body</strong>, and Slack signs the body; and mutual
+         TLS is supported on a custom domain but neither Slack nor GitHub presents a client
+         certificate. Lambda@Edge <em>can</em> do it — a viewer-request function with
+         <code>IncludeBody</code> gets up to 40&nbsp;KB — and is probably not worth the
+         complexity against a WAF rule that simply requires the signature header to be present.</p>
+
+      <h3>⛔ The biggest hole was not the network. It was the secrets.</h3>
+      <p>The Slack signing secret and a 93-character GitHub token were <strong>plaintext Lambda
+         environment variables</strong> across five functions, with no customer-managed key.
+         Three consequences, and the first is the one that matters:</p>
+      <ol>
+        <li>Anyone with <code>lambda:GetFunctionConfiguration</code> read them, in the console.
+            <strong>No network control touches this.</strong></li>
+        <li>A published version freezes <em>configuration</em> as well as code — so every secret
+            was frozen into every version, and rotating one silently invalidated every older
+            version as a rollback target, which is the day you need one.</li>
+        <li>The value travelled through a CloudFormation parameter, and therefore a change set,
+            and therefore anything that archives change sets.</li>
+      </ol>
+      <p>They now hold a <strong>reference</strong> — <code>ssm:/releasebot/&lt;env&gt;/secrets/&lt;name&gt;</code>
+         — resolved at INIT from a SecureString. A value with no scheme is returned unchanged, so
+         the local harness, the contract tests and the dev account keep passing literals and the
+         handler code is identical in both worlds. The <strong>Live</strong> tab reports which
+         mechanism each stage is actually using.</p>
+
+      <div class="flag"><strong>A partly migrated function reports neither.</strong> It reads
+        <code>mixed (1 of 2)</code>, never <code>reference</code> — a half-finished rollout that
+        displays as hardened is worse than one that displays as plaintext.</div>
+
+      <h4>Two traps found doing it</h4>
+      <ul>
+        <li><strong>The <code>kms:Decrypt</code> condition named the wrong service.</strong> All
+            four roles scoped it to <code>ViaService: secretsmanager</code> only — but a
+            SecureString decrypt goes via <em>SSM</em>. That silently refuses it, and the failure
+            is an <code>AccessDenied</code> naming KMS, so the instinct is to widen the key
+            policy, which cannot fix a wrong condition.</li>
+        <li><strong>The secrets live one level down</strong>, under <code>/secrets/</code>. The
+            config reader walks <code>/releasebot/&lt;env&gt;/</code> non-recursively <em>with
+            decryption</em>, so a secret stored as an immediate child is pulled into memory on
+            every INIT for nothing.</li>
+      </ul>
+
+      <h3>★ And a claim that turned out to be wrong</h3>
+      <p>"Rotation is a Parameter Store write with no deploy" is <strong>not true</strong>, and
+         the test caught it: after the parameter was already correct, a correctly-signed request
+         still returned <strong>401</strong> — the warm execution environment had resolved the old
+         secret at INIT and kept serving it.</p>
+      <p>Worse, the obvious fix is also a no-op: <code>publish-version</code> returns the
+         <em>existing</em> version when nothing has changed. There is no API to force a cold
+         start. So the rotation script bumps a marker variable, publishes, and moves the alias —
+         the secret stays a reference and the artifact is untouched, but <strong>it is a deploy,
+         just a configuration-only one.</strong></p>
+      <p>What references genuinely buy, and this part stands: the secret is absent from the
+         function config, the console and every change set; <strong>an older version is no longer
+         stranded as a rollback target</strong>, because it holds a pointer and reads the current
+         value when it next starts; and rotation never rebuilds the artifact.</p>
+
+      <h3>Proven, not described</h3>
+      <p>A correctly-signed slash command on the production stage — signing secret and write
+         token both resolved from SecureStrings — created a real release branch, which was then
+         deleted.</p>
+      <pre><code>✓ correctly signed  -&gt; HTTP 200, command accepted
+✓ wrong signature   -&gt; HTTP 401
+✓ valid sig, 1h old -&gt; HTTP 401   (replay window enforced)</code></pre>
+      <div class="flag"><strong>A positive control alone proves nothing here.</strong> HTTP 200 is
+        also what a function that verifies nothing returns. Only the pair — a correct signature
+        accepted and a wrong one rejected — proves the check is on. The script also asserts on the
+        response <em>body</em>: a 200 carrying a refusal is not a pass, and checking only the
+        status code reported a reversed argument order as success.</div>
+
+      <h3>What is still open, in the order I would do it</h3>
+      <ol>
+        <li><strong>WAF does not reject unsigned requests.</strong> A request with no signature
+            header still invokes the function, which then rejects it — paying an invocation and a
+            cold start to say no. A rule requiring the header blocks it for free. Best win for
+            the effort.</li>
+        <li><strong>WAF has one rule.</strong> No managed rule groups, no body size cap.</li>
+        <li><strong>WAF logging is off.</strong> There is currently no way to tell whether anyone
+            has ever probed the endpoint.</li>
+        <li><strong>No alarm on signature failures.</strong> Three alarms exist — queue depth and
+            two contract checks — and none fires when someone hammers the endpoint with bad
+            signatures. That is the signal that says you are being probed.</li>
+        <li><strong>A customer-managed key</strong> instead of the AWS-managed SSM key, so
+            <code>kms:Decrypt</code> can be scoped by key policy and CloudTrail is per-key.</li>
+      </ol>
+      <div class="flag hard">Items 3 and 4 are not prevention. They are the difference between
+        <strong>being</strong> secure and <strong>knowing</strong> you are.</div>
+    </div><!-- /panel-secure -->
 
   </div>
 </div>
@@ -902,6 +1100,20 @@ function render(d){
       <div class="sha">${esc(p.test.error || p.test.sha)}</div>
     </div>`).join('');
 
+  // ⚠️ Reports the MECHANISM, never a value. "reference" means every
+  // secret-bearing variable holds an ssm: pointer resolved at INIT;
+  // "plaintext" means at least one is a literal in the function's environment,
+  // readable by anyone with lambda:GetFunctionConfiguration. A partly migrated
+  // function must read as neither — a half-finished rollout that displays as
+  // hardened is worse than one that displays as plaintext.
+  const secretBadge = v => {
+    if (!v) return '<span class="mono">—</span>';
+    if (v === 'reference') return '<span class="pill ok">SecureString reference</span>';
+    if (v === 'plaintext') return '<span class="pill bad">plaintext env var</span>';
+    if (v === 'unset')     return '<span class="pill">none set (dry run)</span>';
+    return `<span class="pill held">${esc(v)}</span>`;
+  };
+
   document.getElementById('health').innerHTML = d.health
     .sort((a,b) => a.stage.localeCompare(b.stage))
     .map(h => `
@@ -912,6 +1124,8 @@ function render(d){
       <div class="row"><span>environment</span><span class="mono">${esc(h.env) || '—'}</span></div>
       <div class="row"><span>commit</span><span class="mono">${esc(h.commit) || '—'}</span></div>
       <div class="row"><span>built</span><span class="mono">${esc(h.built) || '—'}</span></div>
+      <div class="row"><span>config from</span><span class="mono">${esc(h.configSource) || '—'}</span></div>
+      <div class="row"><span>secrets</span>${secretBadge(h.secretSource)}</div>
     </div>`).join('');
 
   document.getElementById('stamp').textContent = 'read live ' + esc(d.readAt);
