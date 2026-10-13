@@ -274,6 +274,82 @@ is what separates a senior engineer from a clever one.**
 > captured request replayable forever — Slack's guidance is five minutes, and
 > you want the absolute value so a future-dated capture doesn't slip through."
 
+### "Can Slack talk to a PRIVATE API Gateway?" — ⭐ the one to get exactly right
+
+**The short answer: not directly — and "there is no way" is still wrong.** Three
+routes exist, and one of them keeps the Lambda architecture intact. Knowing the
+difference is the whole value of the answer.
+
+**Why not directly.** A `PRIVATE` REST API is reachable *only* through an
+`execute-api` interface VPC endpoint, from inside the VPC or a network attached
+to it. Slack's servers are on the internet. They cannot reach it. Full stop.
+
+**Route 1 — Slack Socket Mode.** The app opens an **outbound** WebSocket to
+Slack and receives slash commands, Block Kit interactions and Events over it.
+**No inbound endpoint exists at all**, so the API can be private or absent for
+the Slack path entirely.
+⛔ The cost, and say it before they do: Socket Mode needs a **long-lived
+connection**, which Lambda cannot hold. That means ECS/Fargate or EC2 — you are
+trading the serverless footprint for a container in order to delete the public
+surface. For a public-facing news property that may well be the right trade. It
+is a real architectural decision, not a config flag.
+
+**Route 2 — poll Slack instead of being called. ★ This one keeps Lambda.**
+Every Slack *Web API* call is **outbound**: a scheduled Lambda calling
+`conversations.history` needs no inbound path and no container. EventBridge on a
+schedule, a private API, zero public surface.
+⚠️ The real constraint, stated honestly: **a Block Kit button click
+(`block_actions`) is delivered to a request URL or over Socket Mode — there is
+no third way to receive one.** So polling cannot carry the approve *button*.
+★ But it can carry an **emoji reaction**: "approve by reacting ✅" is visible in
+`conversations.history`, needs nothing inbound, and is arguably a *better* audit
+record than a button press — the reaction is attributed, timestamped, and sits
+permanently in the channel next to the request.
+⚠️ Cost: poll latency. A release cut is not latency-sensitive to the second.
+
+**Route 3 — keep the API private and put something else in front.** CloudFront
+or an internet-facing ALB in the VPC, forwarding to the private API.
+⛔ Be honest about this one: **it moves the public surface, it does not remove
+it.** What it buys is real — WAF and Shield on the edge, and an API that cannot
+be reached directly even if a policy is later misconfigured — but anyone who
+says "we made it private" about this architecture is describing the API, not the
+system.
+
+**What to actually say:**
+
+> *"Not directly — a private API is only reachable through an interface endpoint,
+> and Slack is on the internet. There are three ways round it. Socket Mode
+> removes the inbound path completely, but it needs a persistent connection, so
+> you'd be moving off Lambda to a container. Polling Slack's Web API keeps you
+> on Lambda and needs nothing inbound — the catch is you can't receive a button
+> click that way, so the approval becomes an emoji reaction instead, which is
+> honestly a better audit trail. Or you front the private API with CloudFront or
+> an ALB, which moves the public surface rather than removing it. Which one is
+> right depends on whether Slack is inbound for you at all — that's the thing
+> I'd want to establish first."*
+
+★ **And the framing that outranks all three:** for a webhook receiver, **the
+signature is the trust boundary, not the network.** The network controls reduce
+cost and noise — without them anyone on the internet reaches the endpoint and is
+rejected, which still costs an invocation and a cold start *before* the HMAC is
+checked. They do not replace the signature. So "more secure" decomposes into
+three separable things: reject earlier and cheaper, protect the secret that does
+the proving, and be able to *see* attempts.
+
+⚠️ Two things that sound right and do not work — worth knowing, because they are
+the first two suggestions in the room:
+- **A Lambda authorizer doing the HMAC — impossible.** API Gateway `REQUEST`
+  authorizers **do not receive the request body**, and Slack's signature is
+  computed over the body.
+- **mTLS — impossible.** REST APIs support mutual TLS on a custom domain, but
+  neither Slack nor GitHub will present a client certificate.
+- **Lambda@Edge *can*** — a viewer-request function with `IncludeBody: true`
+  does get the body (to 40 KB), so edge HMAC is genuinely possible. Probably not
+  worth the complexity against a WAF rule that simply requires the signature
+  header to be present.
+
+---
+
 ### "How do you keep secrets out of logs and tickets?"
 
 > "Secrets don't go in Lambda environment variables if I can help it — anyone
@@ -368,7 +444,8 @@ should trust you with the riskiest phase.
 
 ## 7. Ask them these
 
-Pick four. They are diagnostic, not decorative.
+Pick four. They are diagnostic, not decorative. #1 and #4 are the two that
+change how the project is run.
 
 1. **"How does your change-freeze calendar run around election coverage and
    year-end?"** — ask this first. It is the delivery risk that decides the
@@ -382,18 +459,50 @@ Pick four. They are diagnostic, not decorative.
    changes I can make, or do they go through another team?"** — the cutover is
    those URLs. If a different team owns them with a two-week change window, the
    project plan is wrong and you will be the one who finds out.
-4. **"Is the ReleaseBot source in a repo you control, with the existing
+4. **"Is Slack inbound — slash commands and interactivity — or does ReleaseBot
+   only post to Slack? And is the API Gateway internet-reachable today, or is
+   there a resource policy in front of it?"** — ⭐ ask this one. It decides the
+   entire security story and nobody else in the loop will have separated the two
+   halves.
+
+   **Why it matters, in one line each:**
+   - If Slack is **inbound**, something must be internet-reachable: a slash
+     command needs a request URL, and Lambda cannot hold the persistent
+     connection that would avoid one. If it is **outbound only** — ReleaseBot
+     posts notifications and is *triggered* by Jira and GitHub — then there is
+     no Slack inbound requirement and the API could be genuinely private.
+   - **Endpoint type is not reachability.** `REGIONAL` means public DNS; a
+     resource policy can still refuse every source but CloudFront or a named
+     CIDR. Ask what is in front of it rather than inferring from the type.
+
+   ⚠️ The scope of work mentions slash commands, so inbound is the likely
+   reading — **but it is a reading.** See THEIR-PLAN-EXPLAINED: state it as one.
+
+   ★ **Then offer the thing they will not have measured.** Of the three inbound
+   sources, two publish allowlistable ranges and one does not:
+
+   | source | allowlistable? |
+   |---|---|
+   | GitHub webhooks | ✅ **9 CIDRs** (`api.github.com/meta`, key `hooks`) |
+   | Jira Cloud | ✅ Atlassian publishes egress ranges (`ip-ranges.atlassian.com`) |
+   | Slack | ❌ no stable published range |
+   | *GitHub Actions runners* | ❌ **7,036 CIDRs** — why a CI-facing stage stays open |
+
+   So **only the Slack path has to be open to the internet.** That is a concrete
+   migration recommendation — narrow two of three paths at zero behavioural risk
+   — rather than "we should lock it down".
+5. **"Is the ReleaseBot source in a repo you control, with the existing
    workflows, or is some of it configured by hand in the console?"** — asks
    whether the baseline will match the templates without accusing anyone.
-5. **"Is there a non-production GitHub org or a repo you're comfortable having a
+6. **"Is there a non-production GitHub org or a repo you're comfortable having a
    test bot cut real branches in?"** — you cannot validate a release bot without
    cutting a release. Proposing the shadow repo shows you have thought past the
    smoke test.
-6. **"What happened to the previous migrations in this programme — anything that
+7. **"What happened to the previous migrations in this programme — anything that
    bit you that I should assume will bite here?"** — free risk register.
-7. **"Who's on call for ReleaseBot after handoff, and what do they have today?"**
+8. **"Who's on call for ReleaseBot after handoff, and what do they have today?"**
    — "operational ownership" is a deliverable in their own acceptance criteria.
-8. **"Is there a path to extension or conversion, and what would it depend on?"**
+9. **"Is there a path to extension or conversion, and what would it depend on?"**
    — costs nothing, and the answer tells you how to spend twelve weeks.
 
 ---

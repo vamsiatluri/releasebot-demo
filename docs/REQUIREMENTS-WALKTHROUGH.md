@@ -33,6 +33,25 @@ Note the order of that list — functions first, integrations last. **I'd argue 
 risk runs the other way.** The functions move in an afternoon. The integrations
 are the project.
 
+**Ask them, and ask this one before the ownership question:** *"Is Slack inbound
+— slash commands and interactivity — or does ReleaseBot only post to Slack? And
+is the API Gateway internet-reachable today, or is there a resource policy in
+front of it?"*
+
+The scope of work mentions slash commands, so inbound is the likely reading —
+**but it is a reading, and the two halves have different answers.** If Slack is
+outbound only, there is no inbound requirement and the API could be private. And
+`REGIONAL` is not the same fact as "anyone can invoke it": a resource policy can
+refuse everything but CloudFront or a named CIDR. `scripts/assess.sh` now
+captures the resource policy and the per-stage WAF association, so this is a
+day-one readout rather than an inference.
+
+★ Of the three inbound sources, **two publish allowlistable ranges and one does
+not** — GitHub's webhook CIDRs (9) and Atlassian's egress ranges, versus Slack,
+which publishes none. So only the Slack path must stay open. Full answer,
+including what to do if they ask whether Slack can reach a *private* API, is in
+INTERVIEW §5.
+
 **Ask them:** *"Who owns the Slack app and the Jira webhook configuration? Are
 those changes I can make, or do they go through another team with their own change
 window?"* If a different team owns them with a two-week lead time, the project
