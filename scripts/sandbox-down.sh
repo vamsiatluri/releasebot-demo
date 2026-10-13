@@ -75,6 +75,64 @@ for s in "${STACKS[@]}"; do
   aws cloudformation wait stack-delete-complete --stack-name "$s" 2>/dev/null || true
 done
 
+# ⛔ DETACHED LAMBDA ENIs BLOCK THE SUBNET FOREVER, and the error names the
+# SUBNET. Deleting a VPC-attached function leaves its hyperplane ENIs behind in
+# status `available` -- detached, costing nothing, and still a dependency. Lambda
+# reaps them on its own schedule while the function exists; once the function is
+# gone there is nothing left to do the reaping, so the network stack fails with:
+#
+#   The subnet 'subnet-0342…' has dependencies and cannot be deleted
+#   resource sg-071a… has a dependent object
+#
+# Neither message mentions an ENI, so the obvious reading is "something is still
+# using the VPC" and the obvious response is to wait, which never resolves.
+#
+# ⚠️ ONLY `available` ones. An in-use ENI means something really is still
+# attached, and deleting it is not ours to attempt.
+#
+# ⚠️ AND THIS MUST RUN *AFTER* THE STACK DELETES, NOT BEFORE. An ENI only
+# becomes `available` once its function is gone, so reaping earlier would find
+# every one of them `in-use` and skip all of them. Hence the shape: delete,
+# wait, reap the now-detached ENIs, then retry whatever failed on them. The one
+# failed network delete is expected, not a bug.
+for ENI in $(aws ec2 describe-network-interfaces \
+      --filters Name=status,Values=available \
+      --query "NetworkInterfaces[?starts_with(Description, 'AWS Lambda VPC ENI')].NetworkInterfaceId" \
+      --output text 2>/dev/null); do
+  echo "  deleting detached Lambda ENI $ENI (it blocks the subnet, and the error blames the subnet)"
+  aws ec2 delete-network-interface --network-interface-id "$ENI" 2>/dev/null || true
+done
+
+# A stack that failed to delete because of those ENIs can now be retried. It is
+# the same delete, against a VPC that no longer has a dependency in it.
+for s in "${STACKS[@]}"; do
+  st=$(aws cloudformation describe-stacks --stack-name "$s" \
+        --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo ABSENT)
+  if [ "$st" = "DELETE_FAILED" ]; then
+    echo "  retrying delete of $s (was DELETE_FAILED)"
+    aws cloudformation delete-stack --stack-name "$s"
+    aws cloudformation wait stack-delete-complete --stack-name "$s" 2>/dev/null || true
+  fi
+done
+
+# ⚠️ The per-environment configuration is written by bootstrap.sh with
+# put-parameter, NOT by a template -- deliberately, so a published Lambda
+# version freezes a POINTER to its config rather than the values. The
+# consequence at teardown is that NO stack owns them, so no stack delete
+# removes them. The verification below already checked for them; the deletion
+# had simply never been written, which is the same gap as the stale stack list:
+# a teardown that knows what to look for and not what to remove.
+PARAMS=$(aws ssm describe-parameters \
+  --query 'Parameters[?starts_with(Name, `/releasebot/`)].Name' --output text 2>/dev/null)
+if [ -n "$PARAMS" ] && [ "$PARAMS" != "None" ]; then
+  # delete-parameters takes at most 10 names per call.
+  echo "$PARAMS" | tr '\t' '\n' | xargs -n 10 2>/dev/null | while IFS= read -r BATCH; do
+    # shellcheck disable=SC2086 -- intentional word splitting: a batch of names
+    aws ssm delete-parameters --names $BATCH >/dev/null 2>&1 || true
+  done
+  echo "  deleted $(echo "$PARAMS" | tr '\t' '\n' | grep -c .) SSM parameter(s) under /releasebot/"
+fi
+
 # Log groups nothing in our templates created. API Gateway writes
 # /aws/apigateway/welcome the first time an account enables logging; Lambda
 # creates /aws/lambda/<fn> implicitly if a template does not declare it, with
@@ -159,6 +217,7 @@ check_empty "ssm parameters"   aws ssm describe-parameters --query 'Parameters[?
 # ⚠️ A non-default VPC left behind costs nothing by itself, but its NAT Gateway
 # and interface endpoints do, and they are easy to miss because nothing lists
 # them next to the stack that made them.
+check_empty "lambda enis"      aws ec2 describe-network-interfaces --query "NetworkInterfaces[?starts_with(Description, 'AWS Lambda VPC ENI')].NetworkInterfaceId" --output text
 check_empty "non-default vpcs" aws ec2 describe-vpcs --filters Name=isDefault,Values=false --query 'Vpcs[].VpcId' --output text
 
 echo

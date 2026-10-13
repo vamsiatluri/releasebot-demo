@@ -110,7 +110,7 @@ rather than to the code.
 
 `scripts/bootstrap.sh` was written from a working account and had never been run against
 nothing. Its first execution in a brand-new AWS account (450315222669, created for this)
-found **eleven real defects in a row**, none of which could surface anywhere else.
+found **thirteen real defects in a row**, none of which could surface anywhere else.
 
 | # | What happened | Why only an empty account shows it |
 |---|---|---|
@@ -321,14 +321,54 @@ Two things wrong, and the second is the subtler one:
   empty — so `s3 ls` reports an empty bucket that S3 refuses to delete. `_empty-bucket.py`
   pages through `list-object-versions` and removes versions and delete markers.
 
-★ Three of the eleven (#5, #9, #11) are the same mistake in different clothes:
+### #12 — a detached ENI blocks the subnet, and the error blames the subnet
+
+With the buckets fixed, the network stack still failed:
+
+```
+The following resource(s) failed to delete: [PrivateSubnetA, LambdaSecurityGroup, PrivateSubnetB]
+  LambdaSecurityGroup  resource sg-071a… has a dependent object
+  PrivateSubnetB       The subnet 'subnet-0342…' has dependencies and cannot be deleted
+```
+
+Nothing in any of those messages mentions an ENI. The dependency was two Lambda hyperplane
+ENIs sitting in status **`available`** — detached, costing nothing, and still a dependency.
+Lambda reaps them on its own schedule *while the function exists*; once the function is
+deleted there is nothing left to do the reaping, so they sit there indefinitely.
+
+The obvious reading of "the subnet has dependencies" is *something is still using the VPC*,
+and the obvious response is to wait — which never resolves, because the thing that would
+have cleaned up has itself been deleted.
+
+The teardown now deletes detached Lambda ENIs itself, and **the ordering is the interesting
+part**: an ENI only becomes `available` once its function is gone, so reaping before the
+stack deletes would find every one of them `in-use` and skip all of them. So the shape is
+delete → wait → reap the now-detached ENIs → retry whatever failed on them. The one failed
+network delete is expected rather than a defect. Only `available` ENIs are touched; an
+`in-use` one means something really is still attached, and removing that is not a teardown
+script's call to make.
+
+### #13 — the config nothing owns
+
+The same run's verification reported **16 SSM parameters still present**. `/releasebot/prod/`
+and `/releasebot/test/` are written by `bootstrap.sh` with `put-parameter`, **not** by a
+template — deliberately, so a published Lambda version freezes a *pointer* to its
+configuration rather than the values (see `internal/paramstore`). The consequence at teardown
+is that no stack owns them, so no stack delete removes them.
+
+★ The verification had been checking for them all along. The *deletion* had simply never been
+written. Same shape as the stale stack list: **a teardown that knows what to look for and not
+what to remove.** The verification being right is what made both findable — which is the
+argument for writing the check even when you believe the cleanup is complete.
+
+★ Three of the thirteen (#5, #9, #11) are the same mistake in different clothes:
 **trusting an operation's report instead of reading the resulting state.** The content key
 that was uploaded but never referenced, the version that was published but never pointed
 at, the bucket that was emptied but not of its versions.
 
 ★ The lesson: **a build script written against an account that already has everything has
-never been tested.** All eleven were invisible in the account it was written in, and each of
-the last five was invisible even in the empty one until the one before it was fixed —
+never been tested.** All thirteen were invisible in the account it was written in, and each of
+the last seven was invisible even in the empty one until the one before it was fixed —
 defects queue up behind one another, so a single run that goes green start to finish proves
 more than any amount of re-reading. #9 in particular could not be found by review at all:
 the template was valid, the deploy succeeded, and the wrong code was serving.

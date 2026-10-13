@@ -362,7 +362,7 @@
     <div class="tabs" role="tablist">
       <button role="tab" id="tab-live"  aria-controls="panel-live"  aria-selected="true">Live</button>
       <button role="tab" id="tab-migrate" aria-controls="panel-migrate" aria-selected="false">Migrating from dev<span class="count">7 phases</span></button>
-      <button role="tab" id="tab-scratch" aria-controls="panel-scratch" aria-selected="false">Building from scratch<span class="count">9 steps · 11 defects</span></button>
+      <button role="tab" id="tab-scratch" aria-controls="panel-scratch" aria-selected="false">Building from scratch<span class="count">9 steps · 13 defects</span></button>
     </div>
 
     <div id="panel-live" role="tabpanel" aria-labelledby="tab-live">
@@ -654,7 +654,7 @@
       <h3>Building a new environment from nothing</h3>
       <p>One command, nine steps, in an account that has never held any of this. It was
          written from an account that already had everything — and its first run against a
-         genuinely empty one found <strong>eleven defects in a row</strong>, every one invisible
+         genuinely empty one found <strong>thirteen defects in a row</strong>, every one invisible
          where it was written. It now completes green, start to finish, and the run below is
          the proof rather than the claim.</p>
 
@@ -691,7 +691,7 @@ scripts/bootstrap.sh \
         other's token.</div>
 
       <h3>What an empty account found</h3>
-      <p>Eleven defects, in the order they surfaced. Each one had to be fixed before the next
+      <p>Thirteen defects, in the order they surfaced. Each one had to be fixed before the next
          became visible — which is why a single run that goes green start to finish proves
          more than any amount of re-reading.</p>
       <ol>
@@ -737,9 +737,27 @@ scripts/bootstrap.sh \
             <code>s3 rm --recursive</code> removes current objects only — a versioned bucket
             keeps every old version plus a delete marker per object, so
             <code>s3 ls</code> reports an empty bucket that S3 refuses to delete.</li>
+        <li><strong>A detached ENI blocks the subnet, and the error blames the subnet.</strong>
+            <em>"The subnet has dependencies and cannot be deleted"</em> — with no mention of an
+            ENI anywhere. Two Lambda hyperplane interfaces sat in status <code>available</code>:
+            detached, free, still a dependency. Lambda reaps them while the function exists;
+            delete the function and nothing is left to do the reaping, so waiting never
+            resolves it. The ordering is the subtle part — an ENI only becomes
+            <code>available</code> <em>after</em> its function is gone, so the reaper has to run
+            after the stack deletes and then retry.</li>
+        <li><strong>The configuration nothing owns.</strong> The per-environment Parameter Store
+            values are written directly rather than by a template — on purpose, so a published
+            version freezes a <em>pointer</em> to its config instead of the values. So no stack
+            owns them and no stack delete removes them. The verification had been checking for
+            them all along; the deletion had never been written.</li>
       </ol>
 
-      <div class="flag"><strong>Three of the eleven are the same mistake wearing different
+      <div class="flag"><strong>Both of the last two were found by a check that was already
+        right.</strong> The teardown's verification knew what to look for before the teardown
+        knew what to remove — which is the argument for writing the check even when you believe
+        the cleanup is complete.</div>
+
+      <div class="flag"><strong>Three of the thirteen are the same mistake wearing different
         clothes:</strong> trusting an operation's report instead of reading the resulting
         state. A content-addressed key uploaded but never referenced. A version published but
         never pointed at. A bucket emptied, but not of its versions.</div>
