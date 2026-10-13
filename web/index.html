@@ -1352,10 +1352,24 @@ function renderRun(run){
     let job = jobFor(run, L.key), body;
 
     if (L.key === "gate"){
+      // ⛔ THE GATE MUST NOT CLAIM A RELEASE THAT DID NOT HAPPEN.
+      // This read used to be `conclusion !== "skipped"` -> success, which turned
+      // a CANCELLED promote into "Approved — released to production." Run #51
+      // was superseded while parked at the gate and never touched production;
+      // the panel would have asserted that it had. A dashboard that invents a
+      // production change is worse than one that shows nothing.
+      //
+      // Four distinct outcomes, and they mean four different things to whoever
+      // is reading this at 2am:
+      //   waiting   — a person still has to decide
+      //   success   — approved, and production moved
+      //   cancelled — superseded by a newer push; production UNTOUCHED
+      //   skipped   — never approved
+      //   failure   — approved, and the promote then failed partway
       job = !prod ? null
           : prod.status === "waiting" ? {status:"waiting"}
-          : prod.status === "completed" && prod.conclusion !== "skipped"
-              ? {status:"completed", conclusion:"success"} : null;
+          : prod.status !== "completed" ? {status:"in_progress"}
+          : {status:"completed", conclusion:prod.conclusion || "failure"};
       const notified = jobFor(run, "slack") || jobFor(run, "notify");
       // ⚠️ NAME WHAT IS BEING APPROVED. A gate that says only "waiting for a
       // person" asks someone to authorise a production deploy without telling
@@ -1369,12 +1383,31 @@ function renderRun(run){
         + `<span class="gate-t">${esc(run.title || "")}</span>`
         + (run.actor ? `<span class="gate-by">pushed by ${esc(run.actor)}</span>` : "")
         + `</div>`;
-      body = job && job.status === "waiting"
-        ? subj + `<div class="lane-empty">Production untouched. Approve in GitHub, or from
+      let gateMsg;
+      if (!job){
+        gateMsg = `<div class="lane-empty">${esc(PENDING.gate)}</div>`;
+      } else if (job.status === "waiting"){
+        gateMsg = subj + `<div class="lane-empty">Production untouched. Approve in GitHub, or from
              the button in Slack.${notified && notified.conclusion === "success"
-               ? " Slack has been told." : ""}</div>`
-        : job ? subj + `<div class="lane-empty">Approved — this run was released to production.</div>`
-              : `<div class="lane-empty">${esc(PENDING.gate)}</div>`;
+               ? " Slack has been told." : ""}</div>`;
+      } else if (job.conclusion === "success"){
+        gateMsg = subj + `<div class="lane-empty">Approved — this run was released to production.</div>`;
+      } else if (job.conclusion === "cancelled"){
+        // A newer push cancels an older run parked at the gate, on purpose: two
+        // pending approvals is how a gate stops being read and starts being
+        // clicked through. The cost is that an approval click on the older one
+        // silently does nothing, so this has to say so.
+        gateMsg = subj + `<div class="lane-empty"><strong>Superseded — production was never
+             touched.</strong> A newer push cancelled this run while it waited. If you
+             approved it, that click did nothing; approve the newer run instead.</div>`;
+      } else if (job.conclusion === "skipped"){
+        gateMsg = subj + `<div class="lane-empty">Never approved — production untouched.</div>`;
+      } else {
+        gateMsg = subj + `<div class="lane-empty"><strong>Approved, then the promote
+             ${esc(job.conclusion || "failed")}.</strong> Production may be part-way — check
+             the fingerprints below against the commit above before re-running.</div>`;
+      }
+      body = gateMsg;
     } else if (L.key === "prod" && prod && prod.status === "waiting"){
       job = null;
       body = `<div class="lane-empty">${esc(PENDING.prod)}</div>`;

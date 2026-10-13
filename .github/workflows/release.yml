@@ -201,9 +201,41 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # ⛔ THE SURVIVOR HAS TO SPEAK FOR THE DEAD. cancel-in-progress means this
+      # run has just killed any older one parked at the gate -- which is the
+      # behaviour we want, because two pending approvals is how a gate stops
+      # being read and starts being clicked through. But the run it killed
+      # cannot say so: every job in it, including its own notifier, died with
+      # it. So an operator who had already been told "approve run #51" clicks a
+      # button that silently does nothing.
+      #
+      # This step names what was displaced, from the run that displaced it.
+      - name: Name any release this one superseded
+        id: superseded
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Runs of THIS workflow, cancelled, numbered below this one, and
+          # touched in the last five minutes. A wider window would start
+          # reporting unrelated cancellations as supersedes.
+          CUTOFF=$(python3 -c "import time,datetime;print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+          # ⚠️ Scoped to THIS workflow file. run_number is per-workflow, so
+          # querying the repository's runs would compare this workflow's
+          # numbers against another workflow's and report nonsense.
+          LIST=$(gh api \
+            "repos/${{ github.repository }}/actions/workflows/release.yml/runs?status=cancelled&per_page=20" \
+            --jq ".workflow_runs[]
+                  | select(.run_number < ${{ github.run_number }})
+                  | select(.updated_at > \"$CUTOFF\")
+                  | \"#\(.run_number)\"" 2>/dev/null | head -3 | tr '\n' ' ')
+          echo "runs=${LIST% }" >> "$GITHUB_OUTPUT"
+          [ -n "${LIST% }" ] && echo "superseded: ${LIST% }" || echo "superseded nothing"
+
       - name: Tell Slack an approval is waiting
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SUPERSEDED: ${{ steps.superseded.outputs.runs }}
         run: |
           bash scripts/ci-slack-notify.sh awaiting \
             "${{ needs.build.outputs.sha }}" \
@@ -384,6 +416,17 @@ jobs:
   notify-failure:
     name: Report a failed release
     needs: [build, test, notify-gate, prod]
+    # ⚠️ 'failure' ONLY. A CANCELLED run has result 'cancelled', so this never
+    # fired for one -- and it could not have reported it anyway, because a job
+    # in the cancelled run's own workflow is cancelled along with it. That is
+    # exactly what happened: run #51 was superseded while parked at the gate,
+    # this job was cancelled too, and Slack said nothing at all after having
+    # already announced "the gate is open". Someone clicked approve on a dead
+    # button and was told nothing.
+    #
+    # ⛔ A notifier that shares the cancelled run's fate cannot report the
+    # cancellation. The supersede has to be announced by the SURVIVOR -- see
+    # notify-gate below. This job keeps its narrow, correct job: real failures.
     if: ${{ always() && contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
     steps:

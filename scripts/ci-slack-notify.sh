@@ -35,11 +35,27 @@ PROD_HEALTH="${PROD_HEALTH_URL:-}"
 
 case "$STATUS" in
   awaiting)
+    # ⛔ NAME WHAT THIS RUN KILLED. cancel-in-progress means a newer push
+    # cancels an older run parked at the gate -- deliberately, because two
+    # pending approvals is how a gate stops being read and starts being clicked
+    # through. But the cancelled run cannot say so: every job in it, its own
+    # notifier included, died with it. So the channel is left holding an
+    # "approve run #51" message whose button is now inert, and clicking it does
+    # nothing and reports nothing.
+    #
+    # ⚠️ The superseded run's message is NOT edited or deleted. A channel is a
+    # record; rewriting history there is worse than appending to it. This says
+    # plainly which message is now dead.
+    SUPERSEDE=""
+    if [ -n "${SUPERSEDED:-}" ]; then
+      SUPERSEDE="
+:warning: *This replaces ${SUPERSEDED}*, which was waiting for approval and has been cancelled. The approval button on that message no longer does anything — approve *this* one."
+    fi
     TEXT=":hourglass_flowing_sand: *ReleaseBot — waiting for your approval*
 
 *Run #${RUN_NUMBER:-?}* · commit \`${COMMIT}\` built and passed every check on *test*. Production has *not* been touched, and will not be until someone approves.
 
-Approving promotes the artifact that was just tested — no rebuild happens, so what ships is what passed."
+Approving promotes the artifact that was just tested — no rebuild happens, so what ships is what passed.${SUPERSEDE}"
     ;;
   promoted)
     TEXT=":white_check_mark: *ReleaseBot — promoted to production*
