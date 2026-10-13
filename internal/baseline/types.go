@@ -112,14 +112,30 @@ type Role struct {
 }
 
 type API struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Type        string  `json:"type"` // REST or HTTP
-	Endpoint    string  `json:"endpoint_type"`
-	Routes      []Route `json:"routes"`
-	Stages      []Stage `json:"stages"`
-	StackOwned  bool    `json:"stack_owned"`
-	OwningStack string  `json:"owning_stack,omitempty"`
+	ID       string  `json:"id"`
+	Name     string  `json:"name"`
+	Type     string  `json:"type"`          // REST or HTTP
+	Endpoint string  `json:"endpoint_type"` // EDGE | REGIONAL | PRIVATE
+	Routes   []Route `json:"routes"`
+	Stages   []Stage `json:"stages"`
+
+	// ⚠️ ENDPOINT TYPE IS NOT REACHABILITY, and conflating the two is the
+	// mistake this field exists to prevent. A REGIONAL api has public DNS; a
+	// resource policy can still refuse every source but CloudFront, a corporate
+	// CIDR, or a webhook provider's published ranges. "REGIONAL" alone tells
+	// you nothing about who can actually invoke it.
+	//
+	// Captured raw, because the policy is the authority. Without it the capture
+	// reports endpoint_type and leaves the only question that matters -- is
+	// this reachable from the internet -- to be guessed at.
+	ResourcePolicy string `json:"resource_policy,omitempty"`
+	// CIDRs the policy names, extracted for the review step. Empty with a
+	// non-empty ResourcePolicy means the policy restricts by something other
+	// than source IP (a VPC endpoint, an account, a service principal).
+	PolicyCidrs []string `json:"policy_cidrs,omitempty"`
+
+	StackOwned  bool   `json:"stack_owned"`
+	OwningStack string `json:"owning_stack,omitempty"`
 }
 
 type Route struct {
@@ -140,6 +156,11 @@ type Stage struct {
 	DataTrace      bool              `json:"data_trace_enabled"`
 	ThrottleRate   float64           `json:"throttle_rate"`
 	ThrottleBurst  int               `json:"throttle_burst"`
+	// ⚠️ PER STAGE, not per API. A WAF web ACL is associated with a STAGE, so
+	// "the API is behind WAF" is not a statement that can be true -- prod can
+	// be protected while test is wide open, which is usually what you want and
+	// always what you need to know.
+	WebACLArn string `json:"web_acl_arn,omitempty"`
 }
 
 type LogGroup struct {

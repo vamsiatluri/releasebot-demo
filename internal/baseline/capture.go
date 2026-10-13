@@ -315,6 +315,15 @@ func (c *Capturer) captureAPIs(b *Baseline, owners map[string]string) error {
 			api.StackOwned, api.OwningStack = true, st
 		}
 
+		// ⚠️ get-rest-apis does not reliably carry the policy, so ask for this
+		// one API explicitly. One extra call per matched API buys the answer to
+		// "can the internet invoke this", which endpoint_type alone cannot give.
+		var one struct{ Policy string }
+		if err := c.aws(&one, "apigateway", "get-rest-api", "--rest-api-id", a.Id); err == nil {
+			api.ResourcePolicy = one.Policy
+			api.PolicyCidrs = policyCidrs(one.Policy)
+		}
+
 		var res struct {
 			Items []struct {
 				Id, Path        string
@@ -347,6 +356,7 @@ func (c *Capturer) captureAPIs(b *Baseline, owners map[string]string) error {
 				Variables               map[string]string
 				TracingEnabled          bool
 				AccessLogSettings       struct{ DestinationArn string }
+				WebAclArn               string
 				MethodSettings          map[string]struct {
 					LoggingLevel         string
 					DataTraceEnabled     bool
@@ -359,7 +369,8 @@ func (c *Capturer) captureAPIs(b *Baseline, owners map[string]string) error {
 			for _, s := range stages.Item {
 				st := Stage{Name: s.StageName, DeploymentID: s.DeploymentId,
 					Variables: s.Variables, TracingEnabled: s.TracingEnabled,
-					AccessLogDest: s.AccessLogSettings.DestinationArn}
+					AccessLogDest: s.AccessLogSettings.DestinationArn,
+					WebACLArn:     s.WebAclArn}
 				for _, ms := range s.MethodSettings {
 					st.LoggingLevel, st.DataTrace = ms.LoggingLevel, ms.DataTraceEnabled
 					st.ThrottleRate, st.ThrottleBurst = ms.ThrottlingRateLimit, ms.ThrottlingBurstLimit

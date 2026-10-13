@@ -120,7 +120,38 @@ func Review(b *Baseline) []Finding {
 				"API is not owned by any stack",
 				"The public front door was configured by hand. Everything about it -- routes, stages, throttling -- has to be read out of the account, not a template."})
 		}
+		// ⚠️ ENDPOINT TYPE IS NOT REACHABILITY. REGIONAL means public DNS; a
+		// resource policy may still refuse everything but CloudFront or a
+		// named CIDR. Reporting the two separately is the point -- "it is
+		// REGIONAL" was the inference people were making in place of reading
+		// the policy, and the answer differs in both directions.
+		if api.Endpoint == "PRIVATE" {
+			f = append(f, Finding{Info, "apigateway/" + api.Name,
+				"PRIVATE endpoint — reachable only through a VPC interface endpoint",
+				"Nothing on the internet can invoke this, which means inbound webhooks from Slack, GitHub or Jira cannot arrive directly. Something else is receiving them -- find it before assuming this API is the whole front door."})
+		} else if api.ResourcePolicy == "" {
+			f = append(f, Finding{Blocker, "apigateway/" + api.Name,
+				api.Endpoint + " endpoint with NO resource policy — invocable by anyone on the internet",
+				"Every source on the internet can reach the endpoint and be rejected, which still costs an invocation and a cold start before any signature is checked. GitHub publishes 9 webhook CIDRs and Atlassian publishes its egress ranges, so those paths are allowlistable today; Slack's are not, which is why the signature -- not the network -- is the trust boundary."})
+		} else if len(api.PolicyCidrs) > 0 {
+			f = append(f, Finding{Info, "apigateway/" + api.Name,
+				"resource policy restricts by source IP",
+				"Read the CIDRs in policy_cidrs against the current published ranges before cutover. GitHub's hook ranges and Atlassian's egress ranges both change, and an allowlist copied across accounts is a silent outage waiting for the next change."})
+		} else {
+			f = append(f, Finding{Info, "apigateway/" + api.Name,
+				"resource policy present, but it does not restrict by source IP",
+				"It restricts by something else -- a VPC endpoint, an account, or a service principal. Read resource_policy; this is the control that decides who can invoke the API and it must come across the migration deliberately."})
+		}
+
 		for _, s := range api.Stages {
+			// ⚠️ WAF binds to a STAGE, not an API, so prod can be protected
+			// while test is open -- usually what you want and always what you
+			// need to know before claiming "the API is behind WAF".
+			if s.WebACLArn == "" {
+				f = append(f, Finding{Warn, "apigateway/" + api.Name + "/" + s.Name,
+					"no WAF web ACL on this stage",
+					"A web ACL associates with a stage, so this one has no rate limiting, no managed rule groups, and no way to reject an unsigned request before it reaches a function."})
+			}
 			if s.DataTrace {
 				f = append(f, Finding{Blocker, "apigateway/" + api.Name + "/" + s.Name,
 					"full request/response logging is enabled",
