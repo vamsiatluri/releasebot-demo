@@ -86,6 +86,9 @@ contract-local:
 # mapping -- `with: {name: x-${{ y }}}` -- makes the file unparseable, and
 # GitHub reports only "workflow file issue" with no line number. Catching it
 # here costs a second; catching it in CI costs a push and a guess.
+lint-shell:
+	@python3 scripts/lint-shell.py
+
 lint-workflows:
 	@python3 -c "import yaml,glob,sys; \
 	bad=[(f,str(e)[:120]) for f in glob.glob('.github/workflows/*.yml') \

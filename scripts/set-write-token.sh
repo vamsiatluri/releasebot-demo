@@ -69,7 +69,7 @@ REPO="${GITHUB_REPO:-releasebot-demo}"
 # A token that deploys cleanly and fails at the first real release is worse
 # than one that is rejected here: the failure then happens to somebody else,
 # under time pressure, and looks like the bot is broken.
-echo "checking the token against $OWNER/$REPO…"
+echo "checking the token against $OWNER/${REPO}..."
 
 code() { # code <method> <path> [body]
   if [ -n "${3:-}" ]; then
@@ -125,7 +125,7 @@ esac
 # ── Deploy it ───────────────────────────────────────────────────────────────
 # ⚠️ Via the ENVIRONMENT, never argv: an argument is visible in `ps` to every
 # user on the machine and lands in shell history.
-echo "applying to the four functions…"
+echo "applying to the four functions..."
 RB_WRITE="$TOKEN" python3 scripts/_update-stack.py releasebot-lambda infra/20-lambda.yaml \
   GitHubToken=@RB_WRITE
 

@@ -51,7 +51,7 @@ TOKEN=$(printf '%s' "$TOKEN" | tr -d '[:space:]')
 case "$TOKEN" in
   github_pat_*)
     echo "✗ that is a FINE-GRAINED token, which this endpoint cannot use." >&2
-    echo "  It needs a classic token (ghp_…) with the 'repo' scope." >&2
+    echo "  It needs a classic token (ghp_...) with the 'repo' scope." >&2
     echo "  Refusing to store one that can only fail at the click." >&2
     exit 3 ;;
   ghp_*) ;;
@@ -76,6 +76,6 @@ unset TOKEN
 aws cloudformation update-stack --stack-name "$STACK" --region "$REGION" \
   --use-previous-template --capabilities CAPABILITY_IAM \
   --parameters "file://$PARAMS" >/dev/null
-echo "… updating $STACK"
+echo "... updating $STACK"
 aws cloudformation wait stack-update-complete --stack-name "$STACK" --region "$REGION"
 echo "✓ endpoint now holds the new token — click Approve in Slack"
