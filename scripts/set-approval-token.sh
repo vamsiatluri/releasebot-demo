@@ -44,7 +44,13 @@ fi
 # whitespace character cannot damage a valid one -- and a token with an
 # invisible newline on the end fails authentication with a 401 that looks like
 # the wrong token rather than the right one, badly pasted.
-TOKEN=$(printf '%s' "$TOKEN" | tr -d '[:space:]')
+# ⚠️ Bracketed paste: terminals wrap a paste in ESC[200~ ... ESC[201~, `read`
+# captures those bytes, and every prefix check then fails on the escape
+# sequence instead of the token -- reporting a bad token when the token is
+# fine. ESC is not whitespace, so tr -d '[:space:]' does not remove it.
+TOKEN=$(printf '%s' "$TOKEN" \
+  | sed $'s/\033\[20[01]~//g' \
+  | tr -d '[:cntrl:][:space:]')
 
 [ -n "$TOKEN" ] || { echo "no token on stdin (is the clipboard empty?)" >&2; exit 2; }
 

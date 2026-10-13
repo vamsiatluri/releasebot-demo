@@ -45,7 +45,21 @@ TOKEN="${RELEASEBOT_WRITE_TOKEN:-}"
 if [ "${1:-}" = "--stdin" ]; then
   IFS= read -r TOKEN || true
 fi
-TOKEN=$(printf '%s' "$TOKEN" | tr -d '[:space:]')
+# ⚠️ BRACKETED PASTE. Most terminals wrap a paste in ESC[200~ ... ESC[201~ so
+# an application can tell typed input from pasted input. `read -s` captures
+# those bytes like any others, so a pasted token arrives as
+# ESC[200~github_pat_xxx and every prefix check fails on the escape sequence
+# rather than on the token. The error then reads "unrecognised token prefix",
+# which sends you to look at the TOKEN -- and the token was fine.
+#
+# Strip the paste markers and every other control character before looking at
+# anything. tr -d '[:space:]' alone does not: ESC is not whitespace.
+clean() {
+  printf '%s' "$1" \
+    | sed $'s/\033\[20[01]~//g' \
+    | tr -d '[:cntrl:][:space:]'
+}
+TOKEN=$(clean "$TOKEN")
 
 # Nothing supplied: ASK, silently. This is the best of the three ways in --
 # nothing on argv (visible in `ps`), nothing in the environment of a logged
@@ -54,7 +68,7 @@ if [ -z "$TOKEN" ] && [ -t 0 ]; then
   printf 'fine-grained GitHub token (input hidden): ' >&2
   IFS= read -rs TOKEN || true
   printf '\n' >&2
-  TOKEN=$(printf '%s' "$TOKEN" | tr -d '[:space:]')
+  TOKEN=$(clean "$TOKEN")
 fi
 
 [ -n "$TOKEN" ] || {
@@ -92,7 +106,24 @@ case "$TOKEN" in
     echo "  and Pull requests: read and write." >&2
     exit 1 ;;
   github_pat_*) ;;
-  *) echo "✗ unrecognised token prefix; expected github_pat_" >&2; exit 1 ;;
+  ghs_*)
+    echo "✗ That is a GitHub App INSTALLATION token (ghs_)." >&2
+    echo "  Those are short-lived and minted per installation; this script wants a" >&2
+    echo "  fine-grained PAT (github_pat_)." >&2
+    exit 1 ;;
+  gho_*|ghu_*)
+    echo "✗ That is an OAuth token, not a personal access token." >&2
+    exit 1 ;;
+  *)
+    # The PREFIX is a type marker, not secret material -- printing the part
+    # before the first underscore says what kind of thing arrived without
+    # revealing any of it. "Unrecognised prefix" on its own is a dead end.
+    SEEN=$(printf '%s' "$TOKEN" | cut -d_ -f1)
+    echo "✗ Unrecognised token prefix." >&2
+    echo "  Saw something beginning '${SEEN}' of ${#TOKEN} characters; expected github_pat_." >&2
+    echo "  If you pasted a fine-grained PAT and see this, the paste picked up stray" >&2
+    echo "  characters — try: pbpaste | $0 --stdin" >&2
+    exit 1 ;;
 esac
 
 OWNER="${GITHUB_OWNER:-vamsiatluri}"
