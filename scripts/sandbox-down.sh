@@ -43,7 +43,7 @@ STACKS=(releasebot-dashboard releasebot-slack-approve releasebot-observability
 # versions and delete markers, and a bucket holding either is still not empty.
 empty_bucket() {
   local b="$1"
-  aws s3api head-bucket --bucket "$b" 2>/dev/null || return 0
+  aws s3api head-bucket --bucket "$b" >/dev/null 2>&1 || return 0
   echo "  emptying $b"
   aws s3 rm "s3://$b" --recursive --only-show-errors 2>/dev/null || true
   # Old versions and delete markers, in pages. Without this a versioned bucket

@@ -433,14 +433,38 @@ func storeETag(path, etag, body string) {
 	etags.m[path] = struct{ etag, body string }{etag, body}
 }
 
+// runTTL is ADAPTIVE, and the reason is the whole point of the conditional
+// requests above: a 304 Not Modified does not count against GitHub's rate
+// limit, so only a CHANGED response costs anything.
+//
+// ⚠️ A flat 120s was the wrong trade in exactly the moment that matters. While
+// a release is held at the approval gate, nothing about the run changes -- so
+// every read is a 304 and FREE -- and that is precisely when somebody is
+// watching the screen waiting for their approval to register. A uniform TTL
+// made the panel look stuck ("it is not moving after I approved") at the one
+// time it needed to look live, while spending its budget on runs nobody was
+// looking at.
+//
+// So: refresh quickly while the run is in a non-terminal state, slowly once it
+// has finished. An active run lasts two or three minutes, so a 15s TTL costs
+// at most a dozen changed reads per release -- well inside 60/hour -- and a
+// held gate costs nothing at all.
 func runTTL() time.Duration {
 	if os.Getenv("GITHUB_TOKEN") != "" {
 		return 10 * time.Second
 	}
-	// Unauthenticated. With conditional requests an unchanged read is free, so
-	// this only bounds how often a CHANGED response can cost us -- 120s keeps
-	// a live run visible while staying well inside 60/hour.
+	if runCache.val != nil && !terminal(runCache.val.Status) {
+		return 15 * time.Second
+	}
 	return 120 * time.Second
+}
+
+// terminal reports whether a run has reached a state that cannot change again.
+// ⚠️ "waiting" is NOT terminal -- it is a run held at the approval gate, which
+// is the state most worth refreshing. Treating it as finished is the bug this
+// function exists to prevent.
+func terminal(status string) bool {
+	return status == "completed"
 }
 
 // cachedRun returns the pipeline panel, refreshing it at most once per TTL.

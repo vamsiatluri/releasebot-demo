@@ -318,6 +318,18 @@
   @media (prefers-reduced-motion:reduce){.sdot{transition:none}}
 
   [hidden]{display:none!important}
+  /* The gate has to say WHICH run it is holding — see renderRun(). */
+  .gate-subj{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 10px;
+    padding:8px 10px;margin:0 0 6px;border-radius:6px;font-size:13px;
+    background:var(--surface-2);border:1px solid var(--rule)}
+  .gate-subj a{font-family:var(--display);font-weight:600;text-decoration:none;
+    color:var(--signal)}
+  .gate-subj a:hover{text-decoration:underline}
+  .gate-subj code{font-family:var(--mono);font-size:11.5px;padding:1px 5px;
+    border-radius:4px;background:var(--ground);color:var(--ink-2)}
+  .gate-t{flex:1 1 160px;min-width:0;color:var(--ink);overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .gate-by{font-size:11.5px;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -1268,6 +1280,32 @@ function secs(n){
 // is actually deciding about.
 const NOISE = /^(set up job|complete job|post |checkout|run actions\/|set up go|pre run)/i;
 
+// The reading's age, ticking, so "nothing is happening" and "I have not looked
+// recently" are visibly different states. Reads the timestamp the server put on
+// the payload rather than the time the browser rendered it -- those differ by
+// however long the server's own cache held the value, which is the whole point.
+let ageTimer = null;
+function startAgeTicker(){
+  if (ageTimer) clearInterval(ageTimer);
+  const tick = () => {
+    const el = document.getElementById("lp-age");
+    if (!el) { clearInterval(ageTimer); ageTimer = null; return; }
+    const at = Date.parse(el.dataset.at || "");
+    if (!at) { el.textContent = ""; return; }
+    const age = Math.max(0, Math.round((Date.now() - at) / 1000));
+    el.textContent = age < 5 ? "read just now"
+                   : age < 60 ? `read ${age}s ago`
+                   : `read ${Math.floor(age / 60)}m ${age % 60}s ago`;
+    // Past the server's refresh window a stale reading is expected, not broken.
+    el.title = age > 125
+      ? "The server refreshes this at most once every 120s because it reads "
+        + "GitHub without a credential. A newer reading is due."
+      : "";
+  };
+  tick();
+  ageTimer = setInterval(tick, 1000);
+}
+
 function renderRun(run){
   const lanes = document.getElementById("lp-lanes");
   const title = document.getElementById("lp-title");
@@ -1301,11 +1339,23 @@ function renderRun(run){
           : prod.status === "completed" && prod.conclusion !== "skipped"
               ? {status:"completed", conclusion:"success"} : null;
       const notified = jobFor(run, "slack") || jobFor(run, "notify");
+      // ⚠️ NAME WHAT IS BEING APPROVED. A gate that says only "waiting for a
+      // person" asks someone to authorise a production deploy without telling
+      // them which one -- and with several runs in flight, "approve" in Slack
+      // and "approve" here can mean different releases. The run number, the
+      // commit and the subject are the minimum needed to approve deliberately
+      // rather than reflexively.
+      const subj = `<div class="gate-subj">`
+        + `<a href="${esc(run.url || "#")}" target="_blank" rel="noopener">Run #${esc(String(run.number || "?"))}</a>`
+        + `<code>${esc((run.commit || "").slice(0,7))}</code>`
+        + `<span class="gate-t">${esc(run.title || "")}</span>`
+        + (run.actor ? `<span class="gate-by">pushed by ${esc(run.actor)}</span>` : "")
+        + `</div>`;
       body = job && job.status === "waiting"
-        ? `<div class="lane-empty">Production untouched. Approve in GitHub, or from
+        ? subj + `<div class="lane-empty">Production untouched. Approve in GitHub, or from
              the button in Slack.${notified && notified.conclusion === "success"
                ? " Slack has been told." : ""}</div>`
-        : job ? `<div class="lane-empty">Approved — the run was released to production.</div>`
+        : job ? subj + `<div class="lane-empty">Approved — this run was released to production.</div>`
               : `<div class="lane-empty">${esc(PENDING.gate)}</div>`;
     } else if (L.key === "prod" && prod && prod.status === "waiting"){
       job = null;
@@ -1336,11 +1386,19 @@ function renderRun(run){
 
   const prod = jobFor(run, "prod");
   const held = prod && prod.status === "waiting";
+  startAgeTicker();
 
   title.textContent = "Run #" + run.number + " · " + (run.title || run.commit);
+  // ⚠️ SAY HOW OLD THIS IS. The panel reads GitHub with NO credential, so the
+  // server refreshes it at most once every 120s (anonymous reads are capped at
+  // 60/hour per egress IP). That is a deliberate trade, but without the age on
+  // screen a two-minute-old reading is indistinguishable from a stuck pipeline
+  // -- which is exactly how it was first reported: "it is not moving after I
+  // approved". It had moved; the panel had not yet re-read.
   meta.innerHTML =
     esc(run.commit) + " · " + esc(run.actor || "") + " · " +
     esc(run.conclusion || run.status) +
+    (run.readAt ? ` · <span id="lp-age" data-at="${esc(run.readAt)}">read just now</span>` : "") +
     (run.stale ? " · cached (GitHub unreachable just now)" : "") +
     (run.url ? ` · <a href="${esc(run.url)}" target="_blank" rel="noopener">on GitHub</a>` : "");
   document.getElementById("live").classList.toggle("on", !run.stale);
