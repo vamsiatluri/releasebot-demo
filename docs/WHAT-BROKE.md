@@ -110,7 +110,7 @@ rather than to the code.
 
 `scripts/bootstrap.sh` was written from a working account and had never been run against
 nothing. Its first execution in a brand-new AWS account (450315222669, created for this)
-found **thirteen real defects in a row**, none of which could surface anywhere else.
+found **fifteen real defects in a row**, none of which could surface anywhere else.
 
 | # | What happened | Why only an empty account shows it |
 |---|---|---|
@@ -361,14 +361,59 @@ written. Same shape as the stale stack list: **a teardown that knows what to loo
 what to remove.** The verification being right is what made both findable — which is the
 argument for writing the check even when you believe the cleanup is complete.
 
-★ Three of the thirteen (#5, #9, #11) are the same mistake in different clothes:
+### #14 — a dry run logged exactly like a real one
+
+The dry-run cut wrote:
+
+```
+cut: release branch ready   created=true   repo=msnbc/releasebot-demo   branch=release/4.99.0
+```
+
+Identical to a real cut. `dry_run:true` appeared only on a *separate* startup line in the same
+stream, so telling them apart meant correlating two log entries. **During an incident that line
+says a branch exists when none does** — and the natural next step is to go looking for a branch,
+or worse, to delete one. `dry_run` now sits on the action line for both `cut` and `mergeback`.
+
+★ Proven both ways rather than assumed: the log said `created=true` and GitHub returned **404**
+for the ref. The log was the thing that was wrong.
+
+### #15 — a teardown-script edit cut a release candidate, and killed a pending approval
+
+Run #51 was parked at the approval gate. A push created run #52 **one second** before #51's
+promote job was cancelled — `cancel-in-progress` working exactly as designed, because two
+pending approvals is how a gate stops being read and starts being clicked through.
+
+The problem is what the commit contained: `scripts/sandbox-down.sh` and `web/index.html`. **A
+local teardown script and a dashboard page — neither of which changes any of the four Lambda
+binaries.** The workflow's `paths-ignore` covers `docs/**` and `**.md`, so a docs commit
+correctly cuts nothing, but an operator-only script is not covered.
+
+So the trigger is broader than "something that changes the deployed artifact", and the cost is
+not just a wasted run: **it cancelled a production approval a person was in the middle of
+giving.**
+
+⚠️ And the supersede was invisible in three places at once, which is the part worth keeping:
+
+- the **dashboard asserted a release that never happened** — the gate lane read
+  `conclusion !== "skipped"` as success, so a *cancelled* promote rendered as "Approved — this
+  run was released to production", about a run that never touched production;
+- the failure notifier fires on `'failure'` only, and a cancelled run's result is `'cancelled'`;
+- it could not have fired anyway, because a job inside the cancelled run **is cancelled with
+  it**. The run log reads `Report a failed release · cancelled`.
+
+★ **A notifier that shares the cancelled run's fate cannot report the cancellation.** The
+supersede has to be announced by the *survivor* — the superseding run now names what it
+displaced, and Slack says the older message's button is inert. The old message is not edited or
+deleted: a channel is a record, and appending to it beats rewriting it.
+
+★ Three of the fifteen (#5, #9, #11) are the same mistake in different clothes:
 **trusting an operation's report instead of reading the resulting state.** The content key
 that was uploaded but never referenced, the version that was published but never pointed
 at, the bucket that was emptied but not of its versions.
 
 ★ The lesson: **a build script written against an account that already has everything has
-never been tested.** All thirteen were invisible in the account it was written in, and each of
-the last seven was invisible even in the empty one until the one before it was fixed —
+never been tested.** All fifteen were invisible in the account it was written in, and each of
+the last nine was invisible even in the empty one until the one before it was fixed —
 defects queue up behind one another, so a single run that goes green start to finish proves
 more than any amount of re-reading. #9 in particular could not be found by review at all:
 the template was valid, the deploy succeeded, and the wrong code was serving.
