@@ -1,0 +1,160 @@
+
+Baseline: reference-working-env
+  account 826653639065  region us-east-1  captured 2026-10-13 01:48 UTC
+  6 functions, 6 roles, 1 APIs, 13 log groups, 3 alarms
+
+  [BLOCKER] lambda/slackApprove
+             holds secret values in environment variables: GITHUB_APPROVAL_TOKEN, SLACK_SIGNING_SECRET
+             Anyone who can read the function's configuration can read these. They
+             must be moved deliberately, never copied between accounts by this or any
+             tool.
+
+  [BLOCKER] lambda/cutRelease
+             holds secret values in environment variables: GITHUB_TOKEN, JIRA_WEBHOOK_SECRET, SLACK_SIGNING_SECRET, SLACK_TOKEN
+             Anyone who can read the function's configuration can read these. They
+             must be moved deliberately, never copied between accounts by this or any
+             tool.
+
+  [BLOCKER] lambda/releaseAutomationMergebackTest
+             holds secret values in environment variables: GITHUB_TOKEN, JIRA_WEBHOOK_SECRET, SLACK_SIGNING_SECRET, SLACK_TOKEN
+             Anyone who can read the function's configuration can read these. They
+             must be moved deliberately, never copied between accounts by this or any
+             tool.
+
+  [BLOCKER] lambda/releasebot-dashboard-api
+             holds secret values in environment variables: GITHUB_TOKEN
+             Anyone who can read the function's configuration can read these. They
+             must be moved deliberately, never copied between accounts by this or any
+             tool.
+
+  [BLOCKER] lambda/releaseAutomationMergeback
+             holds secret values in environment variables: GITHUB_TOKEN, JIRA_WEBHOOK_SECRET, SLACK_SIGNING_SECRET, SLACK_TOKEN
+             Anyone who can read the function's configuration can read these. They
+             must be moved deliberately, never copied between accounts by this or any
+             tool.
+
+  [BLOCKER] lambda/cutReleaseTest
+             holds secret values in environment variables: GITHUB_TOKEN, JIRA_WEBHOOK_SECRET, SLACK_SIGNING_SECRET, SLACK_TOKEN
+             Anyone who can read the function's configuration can read these. They
+             must be moved deliberately, never copied between accounts by this or any
+             tool.
+
+  [WARN   ] lambda/slackApprove
+             has no alias
+             Whatever invokes it is pointed at a mutable target, so there is no
+             one-step rollback. Adding an alias is additive and breaks nothing.
+
+  [WARN   ] lambda/releasebot-dashboard-api
+             has no alias
+             Whatever invokes it is pointed at a mutable target, so there is no
+             one-step rollback. Adding an alias is additive and breaks nothing.
+
+  [WARN   ] logs//aws/apigateway/welcome
+             never expires (216 B stored)
+             Created by Lambda rather than declared in a template, so it is owned by
+             no stack, survives the decommission, and keeps billing after the project
+             is finished.
+
+  [WARN   ] logs//aws/lambda/releasebot-ghprobe
+             never expires (0 B stored)
+             Created by Lambda rather than declared in a template, so it is owned by
+             no stack, survives the decommission, and keeps billing after the project
+             is finished.
+
+  [WARN   ] logs//aws/lambda/releasebot-goprobe
+             never expires (0 B stored)
+             Created by Lambda rather than declared in a template, so it is owned by
+             no stack, survives the decommission, and keeps billing after the project
+             is finished.
+
+  [WARN   ] logs//aws/lambda/releasebot-netprobe
+             never expires (0 B stored)
+             Created by Lambda rather than declared in a template, so it is owned by
+             no stack, survives the decommission, and keeps billing after the project
+             is finished.
+
+  [WARN   ] logs/API-Gateway-Execution-Logs_0aohv0kx5k/prod
+             never expires (534.1 KB stored)
+             Created by Lambda rather than declared in a template, so it is owned by
+             no stack, survives the decommission, and keeps billing after the project
+             is finished.
+
+  [WARN   ] logs/API-Gateway-Execution-Logs_0aohv0kx5k/test
+             never expires (612.7 KB stored)
+             Created by Lambda rather than declared in a template, so it is owned by
+             no stack, survives the decommission, and keeps billing after the project
+             is finished.
+
+  [WARN   ] alarm/releasebot-async-job-dropped
+             alarm notifies nobody
+             It will turn red on a dashboard and page no one. An alarm with no action
+             is decoration.
+
+  [INFO   ] lambda/slackApprove
+             runtime is provided.al2
+             The previous generation. provided.al2023 is current and uses the same
+             contract. Worth a separate, approved change after the migration rather
+             than bundled into it.
+
+  [INFO   ] lambda/cutRelease
+             runtime is provided.al2
+             The previous generation. provided.al2023 is current and uses the same
+             contract. Worth a separate, approved change after the migration rather
+             than bundled into it.
+
+  [INFO   ] lambda/releaseAutomationMergebackTest
+             runtime is provided.al2
+             The previous generation. provided.al2023 is current and uses the same
+             contract. Worth a separate, approved change after the migration rather
+             than bundled into it.
+
+  [INFO   ] lambda/releasebot-dashboard-api
+             no reserved concurrency
+             Nothing caps how many copies can run at once. For a bot that writes to
+             source control, a retry storm is worth bounding.
+
+  [INFO   ] lambda/releasebot-dashboard-api
+             runtime is provided.al2
+             The previous generation. provided.al2023 is current and uses the same
+             contract. Worth a separate, approved change after the migration rather
+             than bundled into it.
+
+  [INFO   ] lambda/releaseAutomationMergeback
+             runtime is provided.al2
+             The previous generation. provided.al2023 is current and uses the same
+             contract. Worth a separate, approved change after the migration rather
+             than bundled into it.
+
+  [INFO   ] lambda/cutReleaseTest
+             runtime is provided.al2
+             The previous generation. provided.al2023 is current and uses the same
+             contract. Worth a separate, approved change after the migration rather
+             than bundled into it.
+
+  [INFO   ] iam/releasebot-exec-cutrelease
+             carries inline policies: async-failure-destination, env-config, release-ledger, secrets, self-invoke
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  [INFO   ] iam/releasebot-exec-mergeback-test
+             carries inline policies: async-failure-destination, env-config, release-ledger, secrets, self-invoke
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  [INFO   ] iam/releasebot-dashboard-ApiRole-ttjoWT4DNnuB
+             carries inline policies: read-release-functions, read-release-ledger, read-the-controls
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  [INFO   ] iam/releasebot-exec-mergeback
+             carries inline policies: async-failure-destination, env-config, release-ledger, secrets, self-invoke
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  [INFO   ] iam/releasebot-exec-cutrelease-test
+             carries inline policies: async-failure-destination, env-config, release-ledger, secrets, self-invoke
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  6 blockers, 9 warnings, 12 informational
+

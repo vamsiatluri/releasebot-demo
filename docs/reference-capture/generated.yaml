@@ -1,0 +1,548 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  GENERATED from a capture of account 826653639065 (us-east-1) on 2026-10-13.
+
+  ⚠️ This is a starting point, not a deployable artifact. It reproduces what the
+  source account actually contained, including anything that got there by hand.
+  Read it, delete what should not come across, then deploy to a sandbox and use
+  `baseline compare` against the original until the only remaining
+  differences are ones you intended.
+
+  Secrets are NOT carried across. Every secret-looking environment variable is a
+  parameter with no default, so the stack fails to deploy until a human supplies
+  it deliberately.
+
+Parameters:
+  ArtifactBucket:
+    Type: String
+    Description: Bucket holding the deployment packages in the TARGET account.
+  GithubApprovalTokenParam:
+    Type: String
+    NoEcho: true
+    Description: >
+      Value for GITHUB_APPROVAL_TOKEN. NOT copied from the source account -- supply it deliberately.
+      Consider holding a Secrets Manager reference here rather than the value
+      itself, so that rolling a function back does not roll the secret back too.
+  SlackSigningSecretParam:
+    Type: String
+    NoEcho: true
+    Description: >
+      Value for SLACK_SIGNING_SECRET. NOT copied from the source account -- supply it deliberately.
+      Consider holding a Secrets Manager reference here rather than the value
+      itself, so that rolling a function back does not roll the secret back too.
+  GithubTokenParam:
+    Type: String
+    NoEcho: true
+    Description: >
+      Value for GITHUB_TOKEN. NOT copied from the source account -- supply it deliberately.
+      Consider holding a Secrets Manager reference here rather than the value
+      itself, so that rolling a function back does not roll the secret back too.
+  JiraWebhookSecretParam:
+    Type: String
+    NoEcho: true
+    Description: >
+      Value for JIRA_WEBHOOK_SECRET. NOT copied from the source account -- supply it deliberately.
+      Consider holding a Secrets Manager reference here rather than the value
+      itself, so that rolling a function back does not roll the secret back too.
+  SlackTokenParam:
+    Type: String
+    NoEcho: true
+    Description: >
+      Value for SLACK_TOKEN. NOT copied from the source account -- supply it deliberately.
+      Consider holding a Secrets Manager reference here rather than the value
+      itself, so that rolling a function back does not roll the secret back too.
+
+Resources:
+
+  # BLOCKER: holds secret values in environment variables: GITHUB_APPROVAL_TOKEN, SLACK_SIGNING_SECRET
+  #   Anyone who can read the function's configuration can read these. They
+  #   must be moved deliberately, never copied between accounts by this or
+  #   any tool.
+  # WARN: has no alias
+  #   Whatever invokes it is pointed at a mutable target, so there is no
+  #   one-step rollback. Adding an alias is additive and breaks nothing.
+  SlackApprove:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: slackApprove
+      Runtime: provided.al2
+      Handler: bootstrap
+      Architectures: [x86_64]
+      MemorySize: 256
+      Timeout: 15
+      ReservedConcurrentExecutions: 2
+      Role: !GetAtt ReleasebotSlackApproveExecutionRole3j42Cx6xDYj3.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: releasebot/slackApprove.zip   # TODO confirm the key in the target account
+      Environment:
+        Variables:
+          GITHUB_APPROVAL_TOKEN: !Ref GithubApprovalTokenParam
+          GITHUB_ENVIRONMENT_ID: 23806238990
+          GITHUB_OWNER: vamsiatluri
+          GITHUB_REPO: releasebot-demo
+          SLACK_APPROVERS: U0C7UFTGKNW
+          SLACK_SIGNING_SECRET: !Ref SlackSigningSecretParam
+
+  # The source function had NO alias, so nothing there has a one-step
+  # rollback. Adding one is additive and changes no behaviour.
+  SlackApproveVersion:
+    Type: AWS::Lambda::Version
+    Properties: {FunctionName: !Ref SlackApprove}
+  SlackApproveAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref SlackApprove
+      FunctionVersion: !GetAtt SlackApproveVersion.Version
+      Name: live
+
+  # Declared deliberately. The source account's group was created by Lambda
+  # with no expiry and owned by no stack, so it would survive decommissioning.
+  SlackApproveLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/slackApprove
+      RetentionInDays: 30   # TODO agree a retention period
+
+  # BLOCKER: holds secret values in environment variables: GITHUB_TOKEN, JIRA_WEBHOOK_SECRET, SLACK_SIGNING_SECRET, SLACK_TOKEN
+  #   Anyone who can read the function's configuration can read these. They
+  #   must be moved deliberately, never copied between accounts by this or
+  #   any tool.
+  CutRelease:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: cutRelease
+      Runtime: provided.al2
+      Handler: bootstrap
+      Architectures: [x86_64]
+      MemorySize: 512
+      Timeout: 30
+      ReservedConcurrentExecutions: 5
+      Role: !GetAtt ReleasebotExecCutrelease.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: releasebot/cutRelease.zip   # TODO confirm the key in the target account
+      Environment:
+        Variables:
+          DD_ENV: prod
+          DD_SERVICE: releasebot
+          DD_SITE: datadoghq.com
+          DD_TRACE_ENABLED: true
+          DEFAULT_OWNER: msnbc
+          GITHUB_TOKEN: !Ref GithubTokenParam
+          JIRA_WEBHOOK_SECRET: !Ref JiraWebhookSecretParam
+          RARC_CONFIG_URL: ''
+          RARC_ENV: prod
+          RELEASEBOT_ACK_ONLY: 1
+          SECRETS_PREFIX: releasebot/prod
+          SLACK_CHANNEL: C0RELEASE
+          SLACK_SIGNING_SECRET: !Ref SlackSigningSecretParam
+          SLACK_TOKEN: !Ref SlackTokenParam
+      Tags:
+        - {Key: app, Value: releasebot}
+        - {Key: migration, Value: msnbc-dev-to-msnbc-prod}
+
+  CutReleaseLiveVersion:
+    Type: AWS::Lambda::Version
+    Properties: {FunctionName: !Ref CutRelease}
+  CutReleaseLiveAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref CutRelease
+      FunctionVersion: !GetAtt CutReleaseLiveVersion.Version
+      Name: live
+
+  # Declared deliberately. The source account's group was created by Lambda
+  # with no expiry and owned by no stack, so it would survive decommissioning.
+  CutReleaseLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/cutRelease
+      RetentionInDays: 30   # TODO agree a retention period
+
+  # BLOCKER: holds secret values in environment variables: GITHUB_TOKEN, JIRA_WEBHOOK_SECRET, SLACK_SIGNING_SECRET, SLACK_TOKEN
+  #   Anyone who can read the function's configuration can read these. They
+  #   must be moved deliberately, never copied between accounts by this or
+  #   any tool.
+  ReleaseAutomationMergebackTest:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: releaseAutomationMergebackTest
+      Runtime: provided.al2
+      Handler: bootstrap
+      Architectures: [x86_64]
+      MemorySize: 512
+      Timeout: 30
+      ReservedConcurrentExecutions: 2
+      Role: !GetAtt ReleasebotExecMergebackTest.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: releasebot/releaseAutomationMergebackTest.zip   # TODO confirm the key in the target account
+      Environment:
+        Variables:
+          DD_ENV: test
+          DD_SERVICE: releasebot
+          DEFAULT_OWNER: msnbc
+          GITHUB_TOKEN: !Ref GithubTokenParam
+          JIRA_WEBHOOK_SECRET: !Ref JiraWebhookSecretParam
+          RARC_CONFIG_URL: ''
+          RARC_ENV: test
+          RELEASEBOT_ACK_ONLY: 1
+          RELEASEBOT_DRY_RUN: 1
+          SECRETS_PREFIX: releasebot/test
+          SLACK_CHANNEL: C0RELEASE
+          SLACK_SIGNING_SECRET: !Ref SlackSigningSecretParam
+          SLACK_TOKEN: !Ref SlackTokenParam
+      Tags:
+        - {Key: app, Value: releasebot}
+
+  ReleaseAutomationMergebackTestLiveVersion:
+    Type: AWS::Lambda::Version
+    Properties: {FunctionName: !Ref ReleaseAutomationMergebackTest}
+  ReleaseAutomationMergebackTestLiveAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref ReleaseAutomationMergebackTest
+      FunctionVersion: !GetAtt ReleaseAutomationMergebackTestLiveVersion.Version
+      Name: live
+
+  # Declared deliberately. The source account's group was created by Lambda
+  # with no expiry and owned by no stack, so it would survive decommissioning.
+  ReleaseAutomationMergebackTestLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/releaseAutomationMergebackTest
+      RetentionInDays: 30   # TODO agree a retention period
+
+  # BLOCKER: holds secret values in environment variables: GITHUB_TOKEN
+  #   Anyone who can read the function's configuration can read these. They
+  #   must be moved deliberately, never copied between accounts by this or
+  #   any tool.
+  # WARN: has no alias
+  #   Whatever invokes it is pointed at a mutable target, so there is no
+  #   one-step rollback. Adding an alias is additive and breaks nothing.
+  ReleasebotDashboardApi:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: releasebot-dashboard-api
+      Runtime: provided.al2
+      Handler: bootstrap
+      Architectures: [x86_64]
+      MemorySize: 256
+      Timeout: 15
+      Role: !GetAtt ReleasebotDashboardApiRoleTtjoWT4DNnuB.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: releasebot/releasebot-dashboard-api.zip   # TODO confirm the key in the target account
+      Environment:
+        Variables:
+          GITHUB_OWNER: vamsiatluri
+          GITHUB_REPO: releasebot-demo
+          GITHUB_TOKEN: !Ref GithubTokenParam
+          GITHUB_WORKFLOW_FILE: release.yml
+          RELEASEBOT_ACCOUNT: 826653639065
+          RELEASEBOT_HEALTH_BASE: 'https://0aohv0kx5k.execute-api.us-east-1.amazonaws.com'
+          RELEASEBOT_STAGES: 'prod,test'
+
+  # The source function had NO alias, so nothing there has a one-step
+  # rollback. Adding one is additive and changes no behaviour.
+  ReleasebotDashboardApiVersion:
+    Type: AWS::Lambda::Version
+    Properties: {FunctionName: !Ref ReleasebotDashboardApi}
+  ReleasebotDashboardApiAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref ReleasebotDashboardApi
+      FunctionVersion: !GetAtt ReleasebotDashboardApiVersion.Version
+      Name: live
+
+  # Declared deliberately. The source account's group was created by Lambda
+  # with no expiry and owned by no stack, so it would survive decommissioning.
+  ReleasebotDashboardApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/releasebot-dashboard-api
+      RetentionInDays: 30   # TODO agree a retention period
+
+  # BLOCKER: holds secret values in environment variables: GITHUB_TOKEN, JIRA_WEBHOOK_SECRET, SLACK_SIGNING_SECRET, SLACK_TOKEN
+  #   Anyone who can read the function's configuration can read these. They
+  #   must be moved deliberately, never copied between accounts by this or
+  #   any tool.
+  ReleaseAutomationMergeback:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: releaseAutomationMergeback
+      Runtime: provided.al2
+      Handler: bootstrap
+      Architectures: [x86_64]
+      MemorySize: 512
+      Timeout: 30
+      ReservedConcurrentExecutions: 5
+      Role: !GetAtt ReleasebotExecMergeback.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: releasebot/releaseAutomationMergeback.zip   # TODO confirm the key in the target account
+      Environment:
+        Variables:
+          DD_ENV: prod
+          DD_SERVICE: releasebot
+          DEFAULT_OWNER: msnbc
+          GITHUB_TOKEN: !Ref GithubTokenParam
+          JIRA_WEBHOOK_SECRET: !Ref JiraWebhookSecretParam
+          RARC_CONFIG_URL: ''
+          RARC_ENV: prod
+          RELEASEBOT_ACK_ONLY: 1
+          SECRETS_PREFIX: releasebot/prod
+          SLACK_CHANNEL: C0RELEASE
+          SLACK_SIGNING_SECRET: !Ref SlackSigningSecretParam
+          SLACK_TOKEN: !Ref SlackTokenParam
+      Tags:
+        - {Key: app, Value: releasebot}
+
+  ReleaseAutomationMergebackLiveVersion:
+    Type: AWS::Lambda::Version
+    Properties: {FunctionName: !Ref ReleaseAutomationMergeback}
+  ReleaseAutomationMergebackLiveAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref ReleaseAutomationMergeback
+      FunctionVersion: !GetAtt ReleaseAutomationMergebackLiveVersion.Version
+      Name: live
+
+  # Declared deliberately. The source account's group was created by Lambda
+  # with no expiry and owned by no stack, so it would survive decommissioning.
+  ReleaseAutomationMergebackLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/releaseAutomationMergeback
+      RetentionInDays: 30   # TODO agree a retention period
+
+  # BLOCKER: holds secret values in environment variables: GITHUB_TOKEN, JIRA_WEBHOOK_SECRET, SLACK_SIGNING_SECRET, SLACK_TOKEN
+  #   Anyone who can read the function's configuration can read these. They
+  #   must be moved deliberately, never copied between accounts by this or
+  #   any tool.
+  CutReleaseTest:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: cutReleaseTest
+      Runtime: provided.al2
+      Handler: bootstrap
+      Architectures: [x86_64]
+      MemorySize: 512
+      Timeout: 30
+      ReservedConcurrentExecutions: 2
+      Role: !GetAtt ReleasebotExecCutreleaseTest.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: releasebot/cutReleaseTest.zip   # TODO confirm the key in the target account
+      Environment:
+        Variables:
+          DD_ENV: test
+          DD_SERVICE: releasebot
+          DD_SITE: datadoghq.com
+          DEFAULT_OWNER: msnbc
+          GITHUB_TOKEN: !Ref GithubTokenParam
+          JIRA_WEBHOOK_SECRET: !Ref JiraWebhookSecretParam
+          RARC_CONFIG_URL: ''
+          RARC_ENV: test
+          RELEASEBOT_ACK_ONLY: 1
+          RELEASEBOT_DRY_RUN: 1
+          SECRETS_PREFIX: releasebot/test
+          SLACK_CHANNEL: C0RELEASE
+          SLACK_SIGNING_SECRET: !Ref SlackSigningSecretParam
+          SLACK_TOKEN: !Ref SlackTokenParam
+      Tags:
+        - {Key: app, Value: releasebot}
+
+  CutReleaseTestLiveVersion:
+    Type: AWS::Lambda::Version
+    Properties: {FunctionName: !Ref CutReleaseTest}
+  CutReleaseTestLiveAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref CutReleaseTest
+      FunctionVersion: !GetAtt CutReleaseTestLiveVersion.Version
+      Name: live
+
+  # Declared deliberately. The source account's group was created by Lambda
+  # with no expiry and owned by no stack, so it would survive decommissioning.
+  CutReleaseTestLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/cutReleaseTest
+      RetentionInDays: 30   # TODO agree a retention period
+
+  ReleasebotSlackApproveExecutionRole3j42Cx6xDYj3:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: releasebot-slack-approve-ExecutionRole-3j42Cx6xDYj3
+      AssumeRolePolicyDocument: {"Statement":[{"Action":"sts:AssumeRole","Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"}}],"Version":"2012-10-17"}
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+
+  ReleasebotExecCutrelease:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: releasebot-exec-cutrelease
+      AssumeRolePolicyDocument: {"Statement":[{"Action":"sts:AssumeRole","Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"}}],"Version":"2012-10-17"}
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: async-failure-destination
+          PolicyDocument: {"Statement":[{"Action":"sqs:SendMessage","Effect":"Allow","Resource":"arn:aws:sqs:us-east-1:826653639065:releasebot-async-failures"}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: env-config
+          PolicyDocument: {"Statement":[{"Action":["ssm:GetParametersByPath","ssm:GetParameter","ssm:GetParameters"],"Effect":"Allow","Resource":["arn:aws:ssm:us-east-1:826653639065:parameter/releasebot/prod","arn:aws:ssm:us-east-1:826653639065:parameter/releasebot/prod/*"]}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: release-ledger
+          PolicyDocument: {"Statement":[{"Action":"dynamodb:PutItem","Condition":{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["ENV#prod"]}},"Effect":"Allow","Resource":"arn:aws:dynamodb:us-east-1:826653639065:table/releasebot-ledger"}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: secrets
+          PolicyDocument: {"Statement":[{"Action":"secretsmanager:GetSecretValue","Effect":"Allow","Resource":"arn:aws:secretsmanager:us-east-1:826653639065:secret:releasebot/prod/*"},{"Action":["kms:Decrypt"],"Condition":{"StringEquals":{"kms:ViaService":"secretsmanager.us-east-1.amazonaws.com"}},"Effect":"Allow","Resource":"*"}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: self-invoke
+          PolicyDocument: {"Statement":[{"Action":"lambda:InvokeFunction","Effect":"Allow","Resource":["arn:aws:lambda:us-east-1:826653639065:function:cutRelease","arn:aws:lambda:us-east-1:826653639065:function:cutRelease:*"]}],"Version":"2012-10-17"}
+
+  ReleasebotExecMergebackTest:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: releasebot-exec-mergeback-test
+      AssumeRolePolicyDocument: {"Statement":[{"Action":"sts:AssumeRole","Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"}}],"Version":"2012-10-17"}
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: async-failure-destination
+          PolicyDocument: {"Statement":[{"Action":"sqs:SendMessage","Effect":"Allow","Resource":"arn:aws:sqs:us-east-1:826653639065:releasebot-async-failures"}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: env-config
+          PolicyDocument: {"Statement":[{"Action":["ssm:GetParametersByPath","ssm:GetParameter","ssm:GetParameters"],"Effect":"Allow","Resource":["arn:aws:ssm:us-east-1:826653639065:parameter/releasebot/test","arn:aws:ssm:us-east-1:826653639065:parameter/releasebot/test/*"]}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: release-ledger
+          PolicyDocument: {"Statement":[{"Action":"dynamodb:PutItem","Condition":{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["ENV#test"]}},"Effect":"Allow","Resource":"arn:aws:dynamodb:us-east-1:826653639065:table/releasebot-ledger"}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: secrets
+          PolicyDocument: {"Statement":[{"Action":"secretsmanager:GetSecretValue","Effect":"Allow","Resource":"arn:aws:secretsmanager:us-east-1:826653639065:secret:releasebot/test/*"},{"Action":["kms:Decrypt"],"Condition":{"StringEquals":{"kms:ViaService":"secretsmanager.us-east-1.amazonaws.com"}},"Effect":"Allow","Resource":"*"}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: self-invoke
+          PolicyDocument: {"Statement":[{"Action":"lambda:InvokeFunction","Effect":"Allow","Resource":["arn:aws:lambda:us-east-1:826653639065:function:releaseAutomationMergebackTest","arn:aws:lambda:us-east-1:826653639065:function:releaseAutomationMergebackTest:*"]}],"Version":"2012-10-17"}
+
+  ReleasebotDashboardApiRoleTtjoWT4DNnuB:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: releasebot-dashboard-ApiRole-ttjoWT4DNnuB
+      AssumeRolePolicyDocument: {"Statement":[{"Action":"sts:AssumeRole","Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"}}],"Version":"2012-10-17"}
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: read-release-functions
+          PolicyDocument: {"Statement":[{"Action":["lambda:GetFunctionConfiguration","lambda:ListVersionsByFunction","lambda:GetAlias"],"Effect":"Allow","Resource":["arn:aws:lambda:us-east-1:826653639065:function:cutRelease*","arn:aws:lambda:us-east-1:826653639065:function:releaseAutomationMergeback*"]}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: read-release-ledger
+          PolicyDocument: {"Statement":[{"Action":["dynamodb:Query"],"Effect":"Allow","Resource":"arn:aws:dynamodb:us-east-1:826653639065:table/releasebot-ledger"}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: read-the-controls
+          PolicyDocument: {"Statement":[{"Action":"sqs:GetQueueAttributes","Effect":"Allow","Resource":"arn:aws:sqs:us-east-1:826653639065:releasebot-async-failures"},{"Action":"cloudwatch:DescribeAlarms","Effect":"Allow","Resource":"*"},{"Action":"apigateway:GET","Effect":"Allow","Resource":"arn:aws:apigateway:us-east-1::/restapis/*/stages/*"}],"Version":"2012-10-17"}
+
+  ReleasebotExecMergeback:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: releasebot-exec-mergeback
+      AssumeRolePolicyDocument: {"Statement":[{"Action":"sts:AssumeRole","Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"}}],"Version":"2012-10-17"}
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: async-failure-destination
+          PolicyDocument: {"Statement":[{"Action":"sqs:SendMessage","Effect":"Allow","Resource":"arn:aws:sqs:us-east-1:826653639065:releasebot-async-failures"}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: env-config
+          PolicyDocument: {"Statement":[{"Action":["ssm:GetParametersByPath","ssm:GetParameter","ssm:GetParameters"],"Effect":"Allow","Resource":["arn:aws:ssm:us-east-1:826653639065:parameter/releasebot/prod","arn:aws:ssm:us-east-1:826653639065:parameter/releasebot/prod/*"]}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: release-ledger
+          PolicyDocument: {"Statement":[{"Action":"dynamodb:PutItem","Condition":{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["ENV#prod"]}},"Effect":"Allow","Resource":"arn:aws:dynamodb:us-east-1:826653639065:table/releasebot-ledger"}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: secrets
+          PolicyDocument: {"Statement":[{"Action":"secretsmanager:GetSecretValue","Effect":"Allow","Resource":"arn:aws:secretsmanager:us-east-1:826653639065:secret:releasebot/prod/*"},{"Action":["kms:Decrypt"],"Condition":{"StringEquals":{"kms:ViaService":"secretsmanager.us-east-1.amazonaws.com"}},"Effect":"Allow","Resource":"*"}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: self-invoke
+          PolicyDocument: {"Statement":[{"Action":"lambda:InvokeFunction","Effect":"Allow","Resource":["arn:aws:lambda:us-east-1:826653639065:function:releaseAutomationMergeback","arn:aws:lambda:us-east-1:826653639065:function:releaseAutomationMergeback:*"]}],"Version":"2012-10-17"}
+
+  ReleasebotExecCutreleaseTest:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: releasebot-exec-cutrelease-test
+      AssumeRolePolicyDocument: {"Statement":[{"Action":"sts:AssumeRole","Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"}}],"Version":"2012-10-17"}
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: async-failure-destination
+          PolicyDocument: {"Statement":[{"Action":"sqs:SendMessage","Effect":"Allow","Resource":"arn:aws:sqs:us-east-1:826653639065:releasebot-async-failures"}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: env-config
+          PolicyDocument: {"Statement":[{"Action":["ssm:GetParametersByPath","ssm:GetParameter","ssm:GetParameters"],"Effect":"Allow","Resource":["arn:aws:ssm:us-east-1:826653639065:parameter/releasebot/test","arn:aws:ssm:us-east-1:826653639065:parameter/releasebot/test/*"]}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: release-ledger
+          PolicyDocument: {"Statement":[{"Action":"dynamodb:PutItem","Condition":{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["ENV#test"]}},"Effect":"Allow","Resource":"arn:aws:dynamodb:us-east-1:826653639065:table/releasebot-ledger"}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: secrets
+          PolicyDocument: {"Statement":[{"Action":"secretsmanager:GetSecretValue","Effect":"Allow","Resource":"arn:aws:secretsmanager:us-east-1:826653639065:secret:releasebot/test/*"},{"Action":["kms:Decrypt"],"Condition":{"StringEquals":{"kms:ViaService":"secretsmanager.us-east-1.amazonaws.com"}},"Effect":"Allow","Resource":"*"}],"Version":"2012-10-17"}
+        # TODO review: inline policy carried over verbatim from the
+        # source account. Inline policy is where console edits hide.
+        - PolicyName: self-invoke
+          PolicyDocument: {"Statement":[{"Action":"lambda:InvokeFunction","Effect":"Allow","Resource":["arn:aws:lambda:us-east-1:826653639065:function:cutReleaseTest","arn:aws:lambda:us-east-1:826653639065:function:cutReleaseTest:*"]}],"Version":"2012-10-17"}
+
+  # API 'releasebot' had 4 routes and 2 stages in the source account.
+  # Routes: GET /beta/health | POST /beta/cut | POST /beta/merge | POST /beta/slack/interact
+  #   stage prod: variables cutFn=cutRelease:live mergeFn=releaseAutomationMergeback:live | logging INFO | throttle 10/20
+  #   stage test: variables cutFn=cutReleaseTest:live mergeFn=releaseAutomationMergebackTest:live | logging INFO | throttle 10/20
+  # ⚠️ The API is NOT generated as resources. Its integration URIs embed the
+  # source account id, and its invoke URL embeds the API id -- both change on
+  # migration, which is the single biggest thing this project has to manage.
+  # Hand-write the API against infra/30-apigw.yaml and use the facts above as
+  # the specification to match.
+
+Outputs:
+  SlackApproveArn: {Value: !GetAtt SlackApprove.Arn}
+  CutReleaseArn: {Value: !GetAtt CutRelease.Arn}
+  ReleaseAutomationMergebackTestArn: {Value: !GetAtt ReleaseAutomationMergebackTest.Arn}
+  ReleasebotDashboardApiArn: {Value: !GetAtt ReleasebotDashboardApi.Arn}
+  ReleaseAutomationMergebackArn: {Value: !GetAtt ReleaseAutomationMergeback.Arn}
+  CutReleaseTestArn: {Value: !GetAtt CutReleaseTest.Arn}

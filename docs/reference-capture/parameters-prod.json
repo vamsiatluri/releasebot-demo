@@ -1,0 +1,42 @@
+[
+    {
+        "name": "/releasebot/prod/ack-only",
+        "value": "true"
+    },
+    {
+        "name": "/releasebot/prod/config-url",
+        "value": "https://raw.githubusercontent.com/msnbc/release-policy/main/prod.json"
+    },
+    {
+        "name": "/releasebot/prod/datadog-service",
+        "value": "releasebot"
+    },
+    {
+        "name": "/releasebot/prod/datadog-site",
+        "value": "datadoghq.com"
+    },
+    {
+        "name": "/releasebot/prod/default-branch",
+        "value": "main"
+    },
+    {
+        "name": "/releasebot/prod/default-owner",
+        "value": "msnbc"
+    },
+    {
+        "name": "/releasebot/prod/github-api-url",
+        "value": "https://api.github.com"
+    },
+    {
+        "name": "/releasebot/prod/github-token-ref",
+        "value": "releasebot/prod/github-token"
+    },
+    {
+        "name": "/releasebot/prod/properties",
+        "value": "{\"news-app\":\"NBC News\",\"nbcnews-web\":\"NBC News\",\"today-web\":\"TODAY\",\"todayshow\":\"TODAY\",\"telemundo-web\":\"Telemundo\",\"telemundo\":\"Telemundo\",\"msnbc-web\":\"MSNBC\",\"payments-core\":\"Shared Platform\",\"news-app-shadow\":\"NBC News (shadow)\",\"releasebot-demo\":\"ReleaseBot itself\"}"
+    },
+    {
+        "name": "/releasebot/prod/slack-channel",
+        "value": "C0RELEASE"
+    }
+]
