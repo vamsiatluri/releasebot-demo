@@ -46,9 +46,42 @@ if [ "${1:-}" = "--stdin" ]; then
   IFS= read -r TOKEN || true
 fi
 TOKEN=$(printf '%s' "$TOKEN" | tr -d '[:space:]')
+
+# Nothing supplied: ASK, silently. This is the best of the three ways in --
+# nothing on argv (visible in `ps`), nothing in the environment of a logged
+# shell, nothing in history. `read -s` echoes nothing.
+if [ -z "$TOKEN" ] && [ -t 0 ]; then
+  printf 'fine-grained GitHub token (input hidden): ' >&2
+  IFS= read -rs TOKEN || true
+  printf '\n' >&2
+  TOKEN=$(printf '%s' "$TOKEN" | tr -d '[:space:]')
+fi
+
 [ -n "$TOKEN" ] || {
-  echo "usage: RELEASEBOT_WRITE_TOKEN='github_pat_...' $0" >&2
-  echo "   or: pbpaste | $0 --stdin" >&2; exit 2; }
+  echo "usage: $0            # prompts, input hidden -- the safest way" >&2
+  echo "   or: pbpaste | $0 --stdin" >&2
+  echo "   or: RELEASEBOT_WRITE_TOKEN=<token> $0" >&2; exit 2; }
+
+# ⚠️ Catch the PLACEHOLDER before spending a round trip on it. A documented
+# command containing `github_pat_...` is a thing people paste verbatim -- I
+# handed one over myself -- and the result is an HTTP 401 that reads as "your
+# token is wrong" rather than "you did not substitute the token". Those send
+# you to completely different places.
+case "$TOKEN" in
+  *...*|*'<'*|*'>'*|*YOUR*|*your_token*|*REPLACE*)
+    echo "✗ That is the PLACEHOLDER, not a token." >&2
+    echo "  It still contains the literal text from the example command." >&2
+    echo "  Run $0 with no arguments and paste the real one at the prompt." >&2
+    exit 2 ;;
+esac
+
+# A fine-grained PAT is ~93 characters. Anything much shorter is a truncated
+# paste, which also 401s and also looks like a bad token.
+if [ "${#TOKEN}" -lt 40 ]; then
+  echo "✗ That token is only ${#TOKEN} characters — a fine-grained PAT is around 93." >&2
+  echo "  Most likely the paste was truncated." >&2
+  exit 2
+fi
 
 case "$TOKEN" in
   ghp_*)
@@ -86,7 +119,16 @@ code() { # code <method> <path> [body]
 }
 
 R=$(code GET /git/ref/heads/main)
-[ "$R" = "200" ] || { echo "✗ contents: read FAILED (HTTP $R)" >&2; exit 1; }
+if [ "$R" != "200" ]; then
+  echo "✗ contents: read FAILED (HTTP $R)" >&2
+  case "$R" in
+    401) echo "  401 means GitHub does not recognise the token at all — expired, revoked," >&2
+         echo "  or not actually pasted. It is NOT a permissions problem." >&2 ;;
+    403) echo "  403 means the token is valid but lacks Contents access to $OWNER/${REPO}." >&2 ;;
+    404) echo "  404 usually means the token is valid but not granted access to THIS repository." >&2 ;;
+  esac
+  exit 1
+fi
 echo "  ✓ contents: read"
 
 R=$(code GET "/pulls?state=open&per_page=1")
