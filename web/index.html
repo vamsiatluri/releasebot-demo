@@ -174,6 +174,46 @@
   .rb-cmd{margin-top:10px; font-family:var(--mono); font-size:11px; color:var(--muted);
           overflow-x:auto; white-space:nowrap; padding-bottom:2px}
 
+  /* tabs */
+  .tabs{display:flex; gap:2px; border-bottom:1px solid var(--rule); margin:0 0 26px;
+        flex-wrap:wrap; position:sticky; top:0; background:var(--bg); z-index:5; padding-top:4px}
+  .tabs button{appearance:none; background:none; border:none; border-bottom:2px solid transparent;
+               font-family:var(--display); font-size:13.5px; font-weight:600; color:var(--muted);
+               padding:10px 15px 9px; cursor:pointer; white-space:nowrap}
+  .tabs button:hover{color:var(--ink-2)}
+  .tabs button[aria-selected="true"]{color:var(--ink); border-bottom-color:var(--signal)}
+  .tabs button:focus-visible{outline:2px solid var(--signal); outline-offset:-2px}
+  .tabs .count{font-family:var(--mono); font-size:10px; color:var(--muted); margin-left:6px}
+
+  /* long-form panels */
+  .doc{max-width:74ch}
+  .doc h3{font-family:var(--display); font-size:17px; color:var(--ink); margin:32px 0 6px}
+  .doc h3:first-child{margin-top:0}
+  .doc h4{font-family:var(--mono); font-size:10.5px; letter-spacing:.09em; text-transform:uppercase;
+          color:var(--muted); margin:22px 0 6px}
+  .doc p{font-size:14px; line-height:1.62; color:var(--ink-2); margin:0 0 12px}
+  .doc ul,.doc ol{font-size:14px; line-height:1.6; color:var(--ink-2); margin:0 0 14px; padding-left:20px}
+  .doc li{margin:4px 0}
+  .doc code{font-family:var(--mono); font-size:12.5px; background:var(--surface-2);
+            border:1px solid var(--rule); border-radius:3px; padding:1px 5px}
+  .doc pre{background:var(--surface-2); border:1px solid var(--rule); border-radius:4px;
+           padding:12px 14px; overflow-x:auto; font-family:var(--mono); font-size:12px;
+           line-height:1.55; color:var(--ink-2); margin:0 0 16px}
+  .doc pre code{background:none; border:none; padding:0}
+  .phase{display:grid; grid-template-columns:34px 1fr; gap:14px; align-items:start;
+         padding:14px 0; border-top:1px solid var(--rule)}
+  .phase:first-of-type{border-top:none}
+  .phase .n{font-family:var(--mono); font-size:11px; color:var(--signal); padding-top:3px}
+  .phase h4{margin:0 0 4px; font-family:var(--display); font-size:14px; font-weight:600;
+            color:var(--ink); text-transform:none; letter-spacing:0}
+  .phase p{margin:0 0 6px; font-size:13.5px}
+  .phase .out{font-size:12.5px; color:var(--muted)}
+  .flag{border-left:3px solid var(--warn); background:var(--warn-soft); padding:11px 14px;
+        border-radius:0 4px 4px 0; margin:0 0 16px; font-size:13.5px; color:var(--ink-2)}
+  .flag strong{color:var(--warn)}
+  .flag.hard{border-left-color:var(--blocking); background:var(--blocking-soft)}
+  .flag.hard strong{color:var(--blocking)}
+
   /* architecture graph */
   .arch{background:var(--surface); border:1px solid var(--rule); border-radius:5px; padding:18px}
   .arch svg{width:100%; height:auto; display:block; min-width:720px}
@@ -307,6 +347,13 @@
   </header>
 
   <div class="wrap">
+    <div class="tabs" role="tablist">
+      <button role="tab" id="tab-live"  aria-controls="panel-live"  aria-selected="true">Live</button>
+      <button role="tab" id="tab-migrate" aria-controls="panel-migrate" aria-selected="false">Migrating from dev<span class="count">7 phases</span></button>
+      <button role="tab" id="tab-scratch" aria-controls="panel-scratch" aria-selected="false">Building from scratch<span class="count">9 steps</span></button>
+    </div>
+
+    <div id="panel-live" role="tabpanel" aria-labelledby="tab-live">
     <div id="verdict"></div>
 
     <section>
@@ -490,6 +537,181 @@
       <span id="stamp"></span>
       <span id="acct"></span>
     </footer>
+    </div><!-- /panel-live -->
+
+    <div id="panel-migrate" role="tabpanel" aria-labelledby="tab-migrate" class="doc" hidden>
+      <h3>Migrating ReleaseBot from msnbc-dev to msnbc production</h3>
+      <p>The approach, written down before the work starts. The order exists because each phase
+         removes a specific unknown — and three of them touch nothing in production at all,
+         which is what makes the schedule survivable.</p>
+
+      <div class="flag"><strong>Raise in week one, not week twelve.</strong>
+        Phase 7's gate is production acceptance over roughly two release cycles. If the
+        release cadence is monthly, <em>Phase 7 falls outside a twelve-week engagement.</em>
+        Three ways to settle it: compress validation and cut over in week 6–7; hand Phase 7
+        over as a pre-approved runbook with a named executor; or extend. Any of those is
+        fine. Discovering it in week eleven is not.</div>
+
+      <div class="flag"><strong>The calendar is the real delivery risk.</strong>
+        This is a newsroom. There will be a change freeze around election coverage, and
+        another from mid-December. Both land inside a contract starting in late October —
+        four to five of twelve weeks of change windows gone. The response is to front-load
+        phases 1–4 into the freeze, because none of them touches production, and target
+        cutover for the back half of November.</div>
+
+      <h4>the seven phases</h4>
+
+      <div class="phase"><div class="n">01</div><div>
+        <h4>Discovery — read the account, do not ask about it</h4>
+        <p><code>scripts/assess.sh msnbc-dev us-east-1 --prefix release</code> reads every
+           function, version, alias, role, inline policy, API stage and alarm into JSON,
+           reviews it for blockers, and drafts a template from what is actually there.</p>
+        <p class="out">Output: an inventory nobody has to remember, and a diff target.
+           Compare against <code>docs/reference-capture/</code> — a known-good environment —
+           so a difference means something.</p></div></div>
+
+      <div class="phase"><div class="n">02</div><div>
+        <h4>Build the target account empty — zero production touch</h4>
+        <p><code>scripts/preflight.sh</code> then <code>scripts/bootstrap.sh</code>. The
+           preflight checks the things that cost a day each: both OIDC subject shapes plus
+           the per-environment one, whether the repository can even carry a required
+           reviewer, DNS hostnames on their VPC, the Lambda concurrency quota.</p>
+        <p class="out">Output: a running, empty ReleaseBot in the production account that
+           nothing points at yet.</p></div></div>
+
+      <div class="phase"><div class="n">03</div><div>
+        <h4>The pipeline, and prove it deploys</h4>
+        <p>OIDC rather than stored keys. Build once, deploy to test, read the fingerprint back
+           off the running function, hold for a named human, promote the same bytes.</p>
+        <p class="out">Output: a green run that ends at the gate, with production untouched.
+           That screenshot is the deliverable.</p></div></div>
+
+      <div class="phase"><div class="n">04</div><div>
+        <h4>Parallel run — both accounts answering, nobody switched</h4>
+        <p>The old account keeps serving. The new one is driven with the same behaviour suite
+           and the same signed payloads. <code>assess.sh --against</code> diffs the two and
+           exits non-zero on a blocking difference, so it can gate a pipeline rather than a
+           meeting.</p>
+        <p class="out">Output: "the production account behaves like the dev account" stops
+           being an opinion.</p></div></div>
+
+      <div class="phase"><div class="n">05</div><div>
+        <h4>Cutover — move the pointers, not the system</h4>
+        <p>Slack slash commands and the Jira webhook are repointed. Everything else was
+           already running.</p>
+        <div class="flag"><strong>The URL is the migration.</strong> An
+          <code>execute-api</code> URL contains the API id, and the API id changes when the
+          API is recreated — which is exactly what this project does. Put a custom domain in
+          front of it <em>before</em> cutover and this step becomes a DNS change instead of a
+          console tour of every integration.</div>
+        <p class="out">Rollback is repointing them back. The old account is still running.</p></div></div>
+
+      <div class="phase"><div class="n">06</div><div>
+        <h4>Soak — the part that cannot be compressed by wanting it</h4>
+        <p>Real releases, cut by real people, through the new account. Watch the dead-letter
+           queue, the alarms, and whether anyone notices anything changed. The success
+           criterion is that they do not.</p>
+        <p class="out">Output: evidence over elapsed time, which is the only kind there is.</p></div></div>
+
+      <div class="phase"><div class="n">07</div><div>
+        <h4>Decommission — and prove it, do not report it</h4>
+        <p>Delete, then require <code>describe-stacks</code> to <em>fail by name</em> and every
+           resource class to list back empty. A teardown that trusts an exit code is a
+           teardown that reports success having deleted nothing — that is in
+           <code>sandbox-down.sh</code> because it happened.</p>
+        <p class="out">Output: a closed account and a written record of what was removed.</p></div></div>
+
+      <h3>What I would want answered in the kickoff</h3>
+      <p>Each of these blocks a week if it arrives late:</p>
+      <ul>
+        <li>Is GitHub <strong>cloud or Enterprise Server</strong>? GHES may remove the public-egress question entirely.</li>
+        <li>Who owns the VPC, and will they give us subnets? That decides <code>--vpc</code> versus <code>--no-vpc</code>.</li>
+        <li>Can the repository carry a <strong>required reviewer</strong>? Private below the Team tier cannot, and the gate then has to be enforced a different way.</li>
+        <li>The Slack <strong>user ids</strong> of the approvers — not emails, and they differ per workspace.</li>
+        <li>The release cadence. It decides whether Phase 7 fits.</li>
+      </ul>
+
+      <h3>What transfers, and what does not</h3>
+      <p>The <strong>pipeline and the verification</strong> transfer. The infrastructure in this
+         repository is a model built from the statement of work, not their system — do not
+         deploy it at them. Read their account first, diff it against a working one, reconcile
+         into <em>their</em> templates.</p>
+    </div><!-- /panel-migrate -->
+
+    <div id="panel-scratch" role="tabpanel" aria-labelledby="tab-scratch" class="doc" hidden>
+      <h3>Building a new environment from nothing</h3>
+      <p>One command, nine steps, in an account that has never held any of this. It was
+         written from an account that already had everything — and its first run against a
+         genuinely empty one found five defects in a row, every one invisible where it was
+         written.</p>
+
+      <pre><code>scripts/preflight.sh                      # before anything exists
+
+scripts/bootstrap.sh \
+  --profile msnbc-prod --region us-east-1 \
+  --owner msnbc --repo releasebot \
+  --vpc vpc-0abc --subnets subnet-a,subnet-b \
+  --admin-email you@nbcuni.com --approvers U123,U456</code></pre>
+
+      <h4>the nine steps</h4>
+      <ol>
+        <li><strong>Preflight</strong> — refuses to continue on a blocker.</li>
+        <li><strong>Artifact bucket</strong> — private, encrypted, public access blocked.</li>
+        <li><strong>Identity</strong> — the OIDC trust and four execution roles, deployed
+            <em>first and separately</em>, so rolling the application back never rolls back the
+            trust relationship the pipeline needs in order to roll it back.</li>
+        <li><strong>Network</strong> — a dedicated VPC, or only the security groups and
+            endpoints inside one they already own. Nothing of theirs is created, so the stack
+            is safe to delete.</li>
+        <li><strong>Artifact</strong> — built once, uploaded under a <em>content-addressed</em>
+            key, and that key passed to the template.</li>
+        <li><strong>Compute</strong> — four functions, each behind a <code>live</code> alias.</li>
+        <li><strong>Edge</strong> — one API, two stages, WAF and throttle on production only.</li>
+        <li><strong>Configuration</strong> — Parameter Store per environment, so a published
+            version freezes a <em>pointer</em> rather than the values.</li>
+        <li><strong>Observability</strong>, then the approval endpoint and the dashboard.</li>
+      </ol>
+
+      <div class="flag"><strong>It puts no credentials anywhere, deliberately.</strong>
+        A bootstrap that takes secrets on its command line writes them into shell history on
+        somebody else's laptop. Two separate scripts do that afterwards, and each refuses the
+        other's token.</div>
+
+      <h3>The five things an empty account found</h3>
+      <ol>
+        <li><strong>The update script crashed on the first deploy</strong> — it assumed the
+            stack already existed, so the one case it most needed to handle was the one it
+            could not.</li>
+        <li><strong>A KMS error naming a key that is nowhere in the template.</strong>
+            <code>SSEEnabled: true</code> on DynamoDB does not mean "encrypt this" — it is
+            already encrypted. It means "use the <em>managed</em> key", which does not exist
+            in a new account until something creates one.</li>
+        <li><strong>A new account's Lambda concurrency limit is ten</strong>, and AWS refuses
+            any reservation leaving fewer than a hundred unreserved. The reservation that
+            protects a mature account makes the stack undeployable in a fresh one.</li>
+        <li><strong>The retry loop hammered a dead stack six times.</strong> A failed create
+            leaves <code>ROLLBACK_COMPLETE</code>, which can be neither updated nor created.
+            It also blamed IAM for every failure — a retry that cannot tell a transient
+            failure from a permanent one is a way of not reading the error.</li>
+        <li><strong>Content-addressed keys that nothing was told about.</strong> The digest is
+            the whole point and is useless if the template still names the default.</li>
+      </ol>
+
+      <div class="flag hard"><strong>One still open.</strong> The compute stack fails
+        CloudFormation's early <em>resource existence</em> check with no resource-level event.
+        A minimal template using the same role and the same artifact creates cleanly, and
+        removing the asynchronous-invoke configs changes nothing — so neither is the cause.
+        The next step is adding resources back in halves. It is written down rather than
+        rounded up.</div>
+
+      <h3>Then prove it, in this order</h3>
+      <pre><code>scripts/probe-egress.sh      # a throwaway function proves the subnets reach GitHub
+scripts/demo.sh              # 13 behaviour checks, no AWS, no credentials
+curl $BASE/prod/beta/health  # the deployed thing answers, and says which commit
+scripts/slash.sh cut ...     # a signed command does real work</code></pre>
+      <p>None of those is "the deploy went green". Every one reads the running system.</p>
+    </div><!-- /panel-scratch -->
+
   </div>
 </div>
 
@@ -707,6 +929,51 @@ function renderRollback(groups){
 }
 
 
+
+
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+//
+// The live panel is the page; the other two are reference. Kept in ONE document
+// rather than three pages so the thing somebody opens in an interview is one
+// link, and so the long-form material cannot drift away from the live state
+// sitting next to it.
+//
+// ⚠️ Toggled with el.hidden, not style.display — the host stylesheet enforces
+// [hidden]{display:none!important}, and a panel hidden by an inline style can
+// be un-hidden by any later rule that sets display.
+function initTabs(){
+  const tabs = [...document.querySelectorAll('.tabs [role="tab"]')];
+  if (!tabs.length) return;
+
+  const show = (id, push) => {
+    tabs.forEach(t => {
+      const on = t.id === id;
+      t.setAttribute("aria-selected", on ? "true" : "false");
+      const panel = document.getElementById(t.getAttribute("aria-controls"));
+      if (panel) panel.hidden = !on;
+    });
+    // The tab lives in the URL so a link can point at the migration plan
+    // directly -- "see the approach" should be one link, not a click
+    // instruction.
+    if (push) history.replaceState(null, "", "#" + id.replace(/^tab-/, ""));
+    window.scrollTo({top: 0});
+  };
+
+  tabs.forEach(t => t.addEventListener("click", () => show(t.id, true)));
+
+  // Arrow keys, because a tablist that only works with a mouse is a row of
+  // buttons wearing the wrong ARIA role.
+  tabs.forEach((t, i) => t.addEventListener("keydown", e => {
+    const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (!d) return;
+    e.preventDefault();
+    const next = tabs[(i + d + tabs.length) % tabs.length];
+    next.focus(); show(next.id, true);
+  }));
+
+  const want = "tab-" + (location.hash || "").replace(/^#/, "");
+  show(tabs.some(t => t.id === want) ? want : "tab-live", false);
+}
 
 // ── The architecture graph ───────────────────────────────────────────────────
 //
@@ -1213,6 +1480,7 @@ async function start(){
     document.getElementById('who').textContent = c?.email ? 'signed in · ' + c.email : 'signed in';
     document.getElementById('gate').hidden = true;
     document.getElementById('app').hidden = false;
+    initTabs();
     wireFlow();
     await load();
   } catch (e) {
