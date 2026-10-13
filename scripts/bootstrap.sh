@@ -56,6 +56,18 @@ step() { printf '\n\033[1m── %s\033[0m\n' "$*"; }
 die()  { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 ACCT=$(aws sts get-caller-identity --query Account --output text) || die "cannot reach AWS with profile $PROFILE"
+
+# ⚠️ A brand-new account has a Lambda concurrency limit of 10, and AWS refuses
+# any reservation leaving fewer than 100 unreserved -- so the reservation that
+# protects a mature account makes the stack undeployable in a fresh one. Decide
+# it from the actual quota rather than making the operator discover it.
+LIMIT=$(aws lambda get-account-settings --query 'AccountLimit.ConcurrentExecutions' --output text 2>/dev/null || echo 0)
+if [ "${LIMIT:-0}" -lt 110 ]; then
+  RESERVED=0
+  echo "  concurrency limit $LIMIT — per-function reservation DISABLED (raise the quota, then redeploy with ReservedConcurrency=5)"
+else
+  RESERVED="${RESERVED_CONCURRENCY:-5}"
+fi
 BUCKET="releasebot-artifacts-$ACCT"
 echo "account $ACCT · region $REGION · repo $OWNER/$REPO · network: $NETWORK_MODE"
 
@@ -127,30 +139,52 @@ make package >/dev/null || die "make package failed"
 # ⚠️ CONTENT-ADDRESSED KEY. CloudFormation compares Code as STRINGS; overwrite
 # the same key and UpdateFunctionCode is never called -- the stack reports
 # success and the OLD binary keeps running.
+# ⚠️ AND THE KEYS MUST BE PASSED TO THE TEMPLATE. Uploading a
+# content-addressed object and leaving the stack on its default key means the
+# functions point at releasebot/cutrelease.zip, which does not exist -- the
+# create fails with "S3 Error Code: NoSuchKey" naming a key you never wrote.
+# Found on the first real run of this script; the digest is the whole point and
+# it is useless if nothing is told about it.
+CUT_KEY=""; MERGE_KEY=""
 for ART in cutrelease mergeback; do
   D=$(openssl dgst -sha256 -binary "build/$ART.zip" | xxd -p -c 32 | cut -c1-12)
-  aws s3 cp "build/$ART.zip" "s3://$BUCKET/releasebot/$ART-$D.zip" --only-show-errors
-  echo "  $ART -> releasebot/$ART-$D.zip"
+  K="releasebot/$ART-$D.zip"
+  aws s3 cp "build/$ART.zip" "s3://$BUCKET/$K" --only-show-errors || die "upload failed"
+  [ "$ART" = cutrelease ] && CUT_KEY="$K" || MERGE_KEY="$K"
+  echo "  $ART -> $K"
 done
 
 # ── 5. compute ──────────────────────────────────────────────────────────────
 step "5/9  compute (four functions, each with a live alias)"
 for attempt in 1 2 3 4 5 6; do
   if python3 scripts/_update-stack.py releasebot-lambda infra/20-lambda.yaml \
-      "ArtifactBucket=$BUCKET" \
+      "ArtifactBucket=$BUCKET" "CutReleaseKey=$CUT_KEY" "MergebackKey=$MERGE_KEY" \
       "CutReleaseRoleArn=arn:aws:iam::$ACCT:role/releasebot-exec-cutrelease" \
       "MergebackRoleArn=arn:aws:iam::$ACCT:role/releasebot-exec-mergeback" \
       "CutReleaseTestRoleArn=arn:aws:iam::$ACCT:role/releasebot-exec-cutrelease-test" \
       "MergebackTestRoleArn=arn:aws:iam::$ACCT:role/releasebot-exec-mergeback-test" \
-      "VpcSubnetIds=$VPC_SUBNETS" "VpcSecurityGroupIds=$VPC_SG" 2>&1 | tail -2; then
+      "VpcSubnetIds=$VPC_SUBNETS" "VpcSecurityGroupIds=$VPC_SG" \
+      "ReservedConcurrency=$RESERVED" 2>&1 | tail -3; then
     break
   fi
-  # ⚠️ Retry, not sleep. A role created seconds ago is not yet visible to
-  # CloudFormation's early validation, which fails with a detail-free
-  # PropertyValidation error. A fixed sleep is a guess that is both too long
-  # most of the time and too short occasionally.
+  # ⚠️ Retry, not sleep -- a role created seconds ago is not yet visible to
+  # CloudFormation's early validation. But ONLY retry that: the first version
+  # of this loop printed "IAM likely not propagated" for every failure,
+  # including a missing S3 key, and hammered six times at something that was
+  # never going to succeed while hiding the real reason. A retry that cannot
+  # distinguish a transient failure from a permanent one is a way of not
+  # reading the error.
+  REASON=$(aws cloudformation describe-stack-events --stack-name releasebot-lambda \
+    --query "StackEvents[?contains(ResourceStatus,'FAILED') && ResourceStatusReason!='Resource creation cancelled'].ResourceStatusReason | [0]" \
+    --output text 2>/dev/null)
+  case "$REASON" in
+    *"not authorized"*|*"Invalid principal"*|*PropertyValidation*|*"cannot be assumed"*)
+      echo "  attempt $attempt: IAM not propagated yet — retrying in 10s" ;;
+    None|"") echo "  attempt $attempt failed with no recorded reason — retrying in 10s" ;;
+    *) die "compute stack failed and retrying will not help:
+    $REASON" ;;
+  esac
   [ "$attempt" = 6 ] && die "compute stack failed after 6 attempts"
-  echo "  attempt $attempt failed (IAM likely not propagated) — retrying in 10s"
   sleep 10
 done
 

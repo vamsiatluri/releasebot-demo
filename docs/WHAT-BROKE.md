@@ -103,3 +103,44 @@ rather than to the code.
 > **Verify at the destination, not at the transport.** The webhook returned 200 the whole time.
 
 > **Read the duration before the error text.** A 15-second timeout that returns in 3 milliseconds is not a timeout — and chasing the word rather than the number cost four wrong theories about the network.
+
+---
+
+## 7. What a genuinely EMPTY account found
+
+`scripts/bootstrap.sh` was written from a working account and had never been run against
+nothing. Its first execution in a brand-new AWS account (450315222669, created for this)
+found **five real defects in a row**, none of which could surface anywhere else.
+
+| # | What happened | Why only an empty account shows it |
+|---|---|---|
+| 1 | `_update-stack.py` crashed on `describe-stacks` | It assumed the stack already existed. The very first deploy is the one case it most needed to handle. |
+| 2 | `LedgerTable` failed with a **KMS NotFoundException** naming a key id that is nowhere in the template | `SSEEnabled: true` does not mean "encrypt" — the table is already encrypted with an AWS-owned key. It means "use the **managed** key `aws/dynamodb`", which **does not exist in a new account** until something creates it. |
+| 3 | The compute stack could not deploy at all | A new account's Lambda concurrency limit is **10**, and AWS refuses any reservation leaving fewer than 100 unreserved. The reservation that protects a mature account makes the stack undeployable in a fresh one — and the error talks about unreserved concurrency, not about the account being new. |
+| 4 | The retry loop hammered a dead stack six times | A failed create leaves `ROLLBACK_COMPLETE`, which can be neither updated **nor** created. It must be deleted. The loop also printed "IAM not propagated" for *every* failure — a retry that cannot tell a transient failure from a permanent one is a way of not reading the error. |
+| 5 | `S3 Error Code: NoSuchKey` | Bootstrap uploaded **content-addressed** keys and never passed them to the template, so the functions pointed at the default `releasebot/cutrelease.zip`. The digest is the whole point and is useless if nothing is told about it. |
+
+### ⏳ Still open, and narrowed
+
+The compute stack fails `AWS::EarlyValidation::ResourceExistenceCheck` with
+**"Validation failed with 1 error(s)"** and **no resource-level event** — CloudFormation
+does not say which reference is unsatisfied.
+
+Established so far, each by a separate change-set probe:
+
+- A minimal template (one function + the same role + the same S3 key) → **CREATE_COMPLETE**.
+  So the execution roles and the artifact are fine.
+- Removing the four `EventInvokeConfig` resources → still fails. Not them.
+- All four execution roles exist; both S3 objects exist at the exact keys passed.
+
+⚠️ One fix already made in passing is worth keeping regardless: the `EventInvokeConfig`
+blocks named their function as a **literal string**, which makes the existence check look
+for a function that already exists. `!Ref` returns the same name at runtime and declares the
+dependency.
+
+**Next step:** add resources back to the minimal template in halves — alias, log groups,
+ledger/DLQ/alarm, VPC config — until it flips. Roughly ninety seconds per round.
+
+★ The lesson stands whatever the last one turns out to be: **a build script written against
+an account that already has everything has never been tested.** Five of the five found here
+were invisible in the account it was written in.

@@ -5,6 +5,16 @@ Description: >
   immutable version and a rollback is one UpdateAlias call rather than a rebuild.
 
 Parameters:
+  # ⚠️ A brand-new AWS account has a Lambda concurrency limit of TEN, and AWS
+  # refuses any reservation that would leave fewer than 100 unreserved. So the
+  # reservation that protects a mature account makes the stack UNDEPLOYABLE in
+  # a fresh one -- and the error talks about unreserved concurrency, not about
+  # the account being new. Set it to 0 to disable until the quota is raised.
+  ReservedConcurrency:
+    Type: Number
+    Default: 5
+    MinValue: 0
+    Description: Per-function concurrency cap. 0 disables it (required on a new account).
   # ── VPC attachment ──────────────────────────────────────────────────────────
   # Empty = NOT attached, which is the default and the correct default: a
   # function in a VPC with no route to what it needs is a function that times
@@ -84,6 +94,7 @@ Parameters:
       bundled into the migration.
 
 Conditions:
+  CapConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
   InVpc:     !Not [!Equals [!Join ['', !Ref VpcSubnetIds], '']]
   TestInVpc: !Not [!Equals [!Join ['', !Ref TestVpcSubnetIds], '']]
   HasDatadog:  !Not [!Equals [!Ref DatadogExtensionArn, '']]
@@ -165,7 +176,18 @@ Resources:
         - {AttributeName: pk, KeyType: HASH}
         - {AttributeName: sk, KeyType: RANGE}
       PointInTimeRecoverySpecification: {PointInTimeRecoveryEnabled: true}
-      SSESpecification: {SSEEnabled: true}
+      # ⚠️ NO SSESpecification, and that is deliberate.
+      #
+      # `SSEEnabled: true` does not mean "encrypt this table" -- the table is
+      # ALREADY encrypted at rest with an AWS-owned key and always has been.
+      # It means "use the AWS MANAGED key aws/dynamodb instead", and that key
+      # does not exist in a brand-new account until something creates it. The
+      # stack then fails with a KMS NotFoundException naming a key id that
+      # appears nowhere in the template, which reads as a permissions problem.
+      #
+      # Found by running bootstrap.sh in a genuinely empty account. It would
+      # never have surfaced in an account that had ever used DynamoDB.
+      # Set it explicitly only if a customer-managed key is a requirement.
       Tags:
         - {Key: app, Value: releasebot}
 
@@ -212,7 +234,7 @@ Resources:
       Timeout: 30
       # A release-cutting bot should never be able to run 1,000 copies of
       # itself. This also caps the blast radius of a retry storm from Jira.
-      ReservedConcurrentExecutions: 5
+      ReservedConcurrentExecutions: !If [CapConcurrency, !Ref ReservedConcurrency, !Ref 'AWS::NoValue']
       Layers: !If [HasDatadog, [!Ref DatadogExtensionArn], !Ref 'AWS::NoValue']
       VpcConfig: !If
         - InVpc
@@ -312,7 +334,7 @@ Resources:
       Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref MergebackKey}
       MemorySize: 512
       Timeout: 30
-      ReservedConcurrentExecutions: 5
+      ReservedConcurrentExecutions: !If [CapConcurrency, !Ref ReservedConcurrency, !Ref 'AWS::NoValue']
       Layers: !If [HasDatadog, [!Ref DatadogExtensionArn], !Ref 'AWS::NoValue']
       VpcConfig: !If
         - InVpc
@@ -458,10 +480,21 @@ Resources:
           MetricValue: '1'
           DefaultValue: 0
 
+  # ⚠️ FunctionName is !Ref, NOT the literal name, and that distinction makes
+  # the difference between a stack that deploys into an empty account and one
+  # that cannot. A literal string makes CloudFormation's
+  # AWS::EarlyValidation::ResourceExistenceCheck look for a function that
+  # ALREADY EXISTS, so the create is rejected before anything is built -- with
+  # a detail-free "Validation failed with 1 error(s)" and no resource-level
+  # event to read. It worked in the account where this was written only because
+  # the functions were already there.
+  #
+  # !Ref on an AWS::Lambda::Function returns its NAME, so this is identical at
+  # runtime and additionally tells CloudFormation about the dependency.
   CutReleaseAsyncConfig:
     Type: AWS::Lambda::EventInvokeConfig
     Properties:
-      FunctionName: cutRelease
+      FunctionName: !Ref CutRelease
       Qualifier: live
       # Two retries, then the DLQ. `cut` is idempotent -- a branch that already
       # exists at the same SHA is treated as success -- so retrying is safe and
@@ -475,7 +508,7 @@ Resources:
   CutReleaseTestAsyncConfig:
     Type: AWS::Lambda::EventInvokeConfig
     Properties:
-      FunctionName: cutReleaseTest
+      FunctionName: !Ref CutReleaseTest
       Qualifier: live
       # Two retries, then the DLQ. `cut` is idempotent -- a branch that already
       # exists at the same SHA is treated as success -- so retrying is safe and
@@ -489,7 +522,7 @@ Resources:
   MergebackAsyncConfig:
     Type: AWS::Lambda::EventInvokeConfig
     Properties:
-      FunctionName: releaseAutomationMergeback
+      FunctionName: !Ref Mergeback
       Qualifier: live
       # Two retries, then the DLQ. `cut` is idempotent -- a branch that already
       # exists at the same SHA is treated as success -- so retrying is safe and
@@ -503,7 +536,7 @@ Resources:
   MergebackTestAsyncConfig:
     Type: AWS::Lambda::EventInvokeConfig
     Properties:
-      FunctionName: releaseAutomationMergebackTest
+      FunctionName: !Ref MergebackTest
       Qualifier: live
       # Two retries, then the DLQ. `cut` is idempotent -- a branch that already
       # exists at the same SHA is treated as success -- so retrying is safe and

@@ -145,8 +145,32 @@ fi
 head "limits"
 CONC=$(aws lambda get-account-settings --query 'AccountLimit.ConcurrentExecutions' --output text 2>/dev/null)
 if [ -n "$CONC" ] && [ "$CONC" != "None" ]; then
-  [ "$CONC" -ge 1000 ] && ok "Lambda concurrency limit $CONC" \
-                       || warn "Lambda concurrency limit is only $CONC — reserved concurrency needs ≥100 unreserved left"
+  if [ "$CONC" -ge 1000 ]; then
+    ok "Lambda concurrency limit $CONC"
+  elif [ "$CONC" -lt 110 ]; then
+    # ⚠️ A BLOCKER, not a warning. A brand-new account gets TEN, and AWS refuses
+    # any reservation leaving fewer than 100 unreserved -- so the compute stack
+    # cannot deploy at all, and the error talks about unreserved concurrency
+    # rather than about the account being new.
+    block "Lambda concurrency limit is only $CONC"
+    note "AWS refuses a reservation that leaves <100 unreserved, so"
+    note "ReservedConcurrentExecutions cannot be set at all here."
+    note "Deploy with ReservedConcurrency=0, or raise the quota first"
+    note "(Service Quotas -> Lambda -> Concurrent executions)."
+  else
+    warn "Lambda concurrency limit is $CONC — size any reservation against it"
+  fi
+
+  # ⚠️ A brand-new account has no aws/dynamodb managed key until something
+  # creates one, and a template asking for it fails with a KMS NotFoundException
+  # naming a key id that is nowhere in the template.
+  if aws kms describe-key --key-id alias/aws/dynamodb >/dev/null 2>&1; then
+    ok "the aws/dynamodb managed key exists"
+  else
+    warn "no aws/dynamodb managed key yet (normal in a new account)"
+    note "the ledger table deliberately does NOT request it — it is encrypted"
+    note "at rest with an AWS-owned key either way"
+  fi
 fi
 EIP=$(aws ec2 describe-account-attributes --attribute-names default-vpc --output text >/dev/null 2>&1 && echo ok || echo "")
 ok "credentials can read EC2 (needed for VPC attachment)"
