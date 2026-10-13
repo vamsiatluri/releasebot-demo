@@ -110,7 +110,7 @@ rather than to the code.
 
 `scripts/bootstrap.sh` was written from a working account and had never been run against
 nothing. Its first execution in a brand-new AWS account (450315222669, created for this)
-found **seven real defects in a row**, none of which could surface anywhere else.
+found **ten real defects in a row**, none of which could surface anywhere else.
 
 | # | What happened | Why only an empty account shows it |
 |---|---|---|
@@ -189,7 +189,120 @@ a condition it had itself handled. A check that fails on something the caller ha
 dealt with teaches people to pass `--skip-preflight`, which costs you every other check.
 It now downgrades to a warning when the caller declares the reservation disabled.
 
+### #8 — a function pointing at a key nothing ever wrote
+
+Step 9 created the approval function with the template's default
+`releasebot/slackapprove.zip` and failed with `NoSuchKey`. The upload loop at step 4
+iterated over `cutrelease mergeback` and had never included `slackapprove` — while
+`make package` had been building the zip the whole time. The failure arrives four steps
+away from the loop that was supposed to write it, naming a key that looks entirely
+plausible.
+
+Two smaller ones in the same step. The approval stack's three credential parameters have
+no defaults, so the first run aborted with
+`[SlackSigningSecret, GitHubApprovalToken, GitHubEnvironmentId] must have values` — which
+reads like a broken script rather than like work a human still owes. And the stack has to
+*exist* before `set-approval-token.sh` can fill the token in (it updates one parameter and
+carries the rest forward), so aborting was also the wrong shape. It now deploys with
+values that **fail closed** and says so in as many words; the environment id, which is not
+a secret, is read from the GitHub API instead of being asked for.
+
+And `_update-stack.py`, having correctly deleted a `ROLLBACK_COMPLETE` stack, then fell
+into its own "the probe failed for some other reason" guard — because after a deliberate
+delete the probe had *succeeded* and `stderr` was empty. It exited 1 printing nothing at
+all. **A reasonless failure is worse than the dead stack it replaced.**
+
+### #9 — ⛔ the green deploy that kept serving the old code
+
+The worst defect in the whole exercise, and the last one found.
+
+`cutRelease`'s `/health` returned **502** while `cutReleaseTest` returned 200. The function
+log showed `START / END / 1.25 ms` and **no error**. A direct `Invoke` gave the real
+answer:
+
+```
+{"errorMessage":"initialisation failed: config: GITHUB_TOKEN is required"}
+```
+
+That part is correct behaviour — prod has no token yet, test runs with
+`RELEASEBOT_DRY_RUN=1` which makes it optional. But fixing the *reporting* of it exposed
+something much worse. After rebuilding and redeploying, the health response still said
+`commit: 8e68d63` and `built: 03:10:31Z` — **the old binary**. The stack said
+`UPDATE_COMPLETE`.
+
+```
+$ aws lambda get-alias --function-name cutRelease --name live --query FunctionVersion
+1
+$ aws lambda list-versions-by-function --function-name cutRelease
+$LATEST   1
+```
+
+**`AWS::Lambda::Version` publishes a new version only when the Version RESOURCE changes.**
+Its only property was `Description: !Sub 'deployed by ${AWS::StackName}'` — a string that
+never changes. So CloudFormation updated the function's code onto `$LATEST`, left the
+`live` alias pointing at version 1, created no new version, and reported success.
+
+This is the same family as the content-addressed-key bug and strictly more dangerous.
+There, the deploy didn't change anything and the stack went green. Here the deploy *did*
+change something, the stack went green, **and the change was not serving.** Nothing about
+the stack's status, the function's `LastModified`, or the S3 object can tell you.
+
+Two fixes, and the second matters more than the first:
+
+1. The description now carries the content-addressed key —
+   `!Sub 'deployed by ${AWS::StackName} from ${CutReleaseKey}'`. A changed binary changes
+   the key, which changes the Version resource, which publishes a version, which moves
+   the alias.
+2. **Bootstrap reads the alias back.** It compares the `CodeSha256` the `live` qualifier
+   actually serves against the artifact it just uploaded, for all four functions, and
+   dies if they differ:
+
+```
+✓ cutRelease live -> v2 serves the artifact just uploaded
+✓ cutReleaseTest live -> v2 serves the artifact just uploaded
+✓ releaseAutomationMergeback live -> v2 serves the artifact just uploaded
+✓ releaseAutomationMergebackTest live -> v2 serves the artifact just uploaded
+```
+
+★ **A deploy is not finished when the deploy tool is finished.** Every check in this file
+that found something real asked the destination; every check that got fooled asked the
+transport.
+
+The INIT failure got three fixes of its own, because its failure mode was misleading in
+three separate ways at once: a bare 502 is indistinguishable from a crash, the reason
+existed only in a direct-Invoke response body nobody reads until much later, and
+`/health` — the one endpoint whose entire job is to report readiness — was the endpoint
+that could not answer. It now returns **503 with the missing key named**, the failure is
+logged at INIT where an operator will see it, and every other route still refuses:
+
+```
+HTTP 503
+{"ok": false, "ready": false, "reason": "config: GITHUB_TOKEN is required",
+ "hint": "...the function is refusing to serve rather than running without credentials."}
+```
+
+### #10 — the teardown that would have reported an empty account
+
+`sandbox-down.sh` is built around the right idea — it lists every resource class back and
+fails if anything remains. Its stack list had simply gone stale: written before the
+dashboard, approval and network stacks existed, it would have deleted seven stacks, left a
+**CloudFront distribution, a Cognito user pool, a VPC with a NAT Gateway, two interface
+endpoints, a DynamoDB table and an SQS queue** running, and then printed:
+
+```
+TEARDOWN VERIFIED: the account is empty.
+```
+
+Because it verified only the classes it already knew about. ★ **A verification that
+enumerates a hand-written list proves the list, not the account** — and it fails in the
+most expensive possible direction, since the thing it misses is the thing still billing.
+It now covers DynamoDB, SQS, Cognito, CloudFront, WAF, NAT gateways, VPC endpoints,
+non-default VPCs and SSM parameters, and deletes the retained ledger table explicitly,
+since no stack delete ever will.
+
 ★ The lesson: **a build script written against an account that already has everything has
-never been tested.** All seven were invisible in the account it was written in, and the last
-two were invisible even in the empty one until the one before them was fixed — defects
-queue up behind each other, so a single clean run proves more than any amount of review.
+never been tested.** All ten were invisible in the account it was written in, and each of
+the last four was invisible even in the empty one until the one before it was fixed —
+defects queue up behind one another, so a single run that goes green start to finish proves
+more than any amount of re-reading. #9 in particular could not be found by review at all:
+the template was valid, the deploy succeeded, and the wrong code was serving.
