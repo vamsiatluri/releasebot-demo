@@ -41,12 +41,27 @@ Parameters:
     Type: String
     NoEcho: true
     Description: >
-      Fine-grained token scoped to this repository with Actions read/write. It is
-      the identity every Slack-originated approval is recorded as.
+      ⛔ A CLASSIC PAT with the `repo` scope. A FINE-GRAINED token CANNOT approve
+      a deployment at all -- not with any permission set. It returns 403 even
+      with Actions: read and write, and the 403 reads as a missing permission,
+      so the natural response is to keep granting permissions that cannot fix
+      it. This is the identity every Slack-originated approval is recorded as.
+      Set it with scripts/set-approval-token.sh, which refuses fine-grained
+      tokens outright.
   LogRetentionDays: {Type: Number, Default: 7}
+  ReservedConcurrency:
+    Type: Number
+    Default: 2
+    MinValue: 0
+    Description: >
+      Per-function concurrency cap. 0 disables it entirely, which is REQUIRED on
+      an account whose total concurrency limit is below 110 -- AWS refuses any
+      reservation that leaves fewer than 100 unreserved, and a new account gets
+      ten. The failure names unreserved concurrency, never the account's age.
 
 Conditions:
   InVpc: !Not [!Equals [!Join ['', !Ref VpcSubnetIds], '']]
+  CapConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
 
 Resources:
 
@@ -88,7 +103,7 @@ Resources:
       # A button that approves production deploys has no reason to run at scale.
       # Capping it bounds what a flood of forged clicks can cost, even though
       # each one is rejected.
-      ReservedConcurrentExecutions: 2
+      ReservedConcurrentExecutions: !If [CapConcurrency, !Ref ReservedConcurrency, !Ref 'AWS::NoValue']
       VpcConfig: !If
         - InVpc
         - SubnetIds: !Ref VpcSubnetIds

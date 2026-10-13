@@ -263,9 +263,18 @@ Resources:
 
   CutReleaseVersion:
     Type: AWS::Lambda::Version
+    # ⛔ THE DESCRIPTION MUST CARRY THE ARTIFACT KEY.
+    # AWS::Lambda::Version publishes a new version only when the VERSION
+    # RESOURCE changes. A fixed description never changes, so a deploy with a
+    # new binary updated $LATEST, left `live` pointing at version 1, reported
+    # CREATE/UPDATE_COMPLETE, and kept serving the OLD code. The stack is green
+    # and the fix is not deployed -- the single most dangerous shape a deploy
+    # can have, and invisible unless you read the alias back.
+    # The key is content-addressed, so a changed binary changes this string,
+    # which forces a new version, which moves the alias.
     Properties:
       FunctionName: !Ref CutRelease
-      Description: !Sub 'deployed by ${AWS::StackName}'
+      Description: !Sub 'deployed by ${AWS::StackName} from ${CutReleaseKey}'
 
   CutReleaseAlias:
     Type: AWS::Lambda::Alias
@@ -286,7 +295,10 @@ Resources:
       Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref CutReleaseKey}
       MemorySize: 512
       Timeout: 30
-      ReservedConcurrentExecutions: 2
+      # Routed through the same switch as prod: on an account whose total
+      # concurrency limit is 10, AWS refuses ANY reservation, so a hardcoded
+      # literal here makes the whole stack un-creatable in a fresh account.
+      ReservedConcurrentExecutions: !If [CapConcurrency, 2, !Ref 'AWS::NoValue']
       Layers: !If [HasDatadog, [!Ref DatadogExtensionArn], !Ref 'AWS::NoValue']
       VpcConfig: !If
         - TestInVpc
@@ -314,7 +326,11 @@ Resources:
 
   CutReleaseTestVersion:
     Type: AWS::Lambda::Version
-    Properties: {FunctionName: !Ref CutReleaseTest}
+    # See CutReleaseVersion: the description carries the content-addressed
+    # key so a new binary forces a new version and the alias follows.
+    Properties:
+      FunctionName: !Ref CutReleaseTest
+      Description: !Sub 'deployed by ${AWS::StackName} from ${CutReleaseKey}'
   CutReleaseTestAlias:
     Type: AWS::Lambda::Alias
     Properties:
@@ -360,7 +376,11 @@ Resources:
 
   MergebackVersion:
     Type: AWS::Lambda::Version
-    Properties: {FunctionName: !Ref Mergeback}
+    # See CutReleaseVersion: the description carries the content-addressed
+    # key so a new binary forces a new version and the alias follows.
+    Properties:
+      FunctionName: !Ref Mergeback
+      Description: !Sub 'deployed by ${AWS::StackName} from ${MergebackKey}'
   MergebackAlias:
     Type: AWS::Lambda::Alias
     Properties:
@@ -380,7 +400,10 @@ Resources:
       Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref MergebackKey}
       MemorySize: 512
       Timeout: 30
-      ReservedConcurrentExecutions: 2
+      # Routed through the same switch as prod: on an account whose total
+      # concurrency limit is 10, AWS refuses ANY reservation, so a hardcoded
+      # literal here makes the whole stack un-creatable in a fresh account.
+      ReservedConcurrentExecutions: !If [CapConcurrency, 2, !Ref 'AWS::NoValue']
       Layers: !If [HasDatadog, [!Ref DatadogExtensionArn], !Ref 'AWS::NoValue']
       VpcConfig: !If
         - TestInVpc
@@ -407,7 +430,11 @@ Resources:
 
   MergebackTestVersion:
     Type: AWS::Lambda::Version
-    Properties: {FunctionName: !Ref MergebackTest}
+    # See CutReleaseVersion: the description carries the content-addressed
+    # key so a new binary forces a new version and the alias follows.
+    Properties:
+      FunctionName: !Ref MergebackTest
+      Description: !Sub 'deployed by ${AWS::StackName} from ${MergebackKey}'
   MergebackTestAlias:
     Type: AWS::Lambda::Alias
     Properties:

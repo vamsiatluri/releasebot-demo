@@ -152,11 +152,21 @@ if [ -n "$CONC" ] && [ "$CONC" != "None" ]; then
     # any reservation leaving fewer than 100 unreserved -- so the compute stack
     # cannot deploy at all, and the error talks about unreserved concurrency
     # rather than about the account being new.
-    block "Lambda concurrency limit is only $CONC"
-    note "AWS refuses a reservation that leaves <100 unreserved, so"
-    note "ReservedConcurrentExecutions cannot be set at all here."
-    note "Deploy with ReservedConcurrency=0, or raise the quota first"
-    note "(Service Quotas -> Lambda -> Concurrent executions)."
+    # ⚠️ Only a BLOCKER when the caller has not already decided to deploy
+    # without reservations. bootstrap.sh reads this same quota and exports
+    # RESERVED_DECIDED=0, so blocking it there would stop a run that cannot
+    # possibly hit the limit -- a check that fails on a condition the caller
+    # has already handled trains people to pass --skip-preflight.
+    if [ "${RESERVED_DECIDED:-unset}" = "0" ]; then
+      warn "Lambda concurrency limit is only $CONC — reservations disabled, as required"
+      note "raise the quota later and redeploy with ReservedConcurrency=5"
+    else
+      block "Lambda concurrency limit is only $CONC"
+      note "AWS refuses a reservation that leaves <100 unreserved, so"
+      note "ReservedConcurrentExecutions cannot be set at all here."
+      note "Deploy with ReservedConcurrency=0, or raise the quota first"
+      note "(Service Quotas -> Lambda -> Concurrent executions)."
+    fi
   else
     warn "Lambda concurrency limit is $CONC — size any reservation against it"
   fi
@@ -186,6 +196,59 @@ note "set-approval-token.sh refuses fine-grained; set-write-token.sh refuses cla
 note "⚠️ A fine-grained token reads a PUBLIC repo without the Contents permission,"
 note "   so 'it can read the repo' proves nothing about whether it can write."
 note "   set-write-token.sh proves write BY WRITING a throwaway ref."
+
+# ── 7b. the templates themselves, and what a rollback leaves behind ────────
+head "templates and leftovers"
+
+# ⚠️ Every concurrency reservation in the templates must route through the
+# CapConcurrency switch. Two of them were hardcoded literals, which meant
+# `ReservedConcurrency=0` silently did not apply to those functions and the
+# compute stack could not create at all in an account with a limit of 10.
+HARD=$(grep -rn 'ReservedConcurrentExecutions:[[:space:]]*[0-9]' infra/*.yaml || true)
+if [ -n "$HARD" ]; then
+  block "a hardcoded concurrency reservation ignores the disable switch"
+  printf '%s\n' "$HARD" | while IFS= read -r L; do note "$L"; done
+  note "route it through !If [CapConcurrency, N, !Ref 'AWS::NoValue']"
+else
+  ok "every concurrency reservation routes through CapConcurrency"
+fi
+
+# ⚠️ DeletionPolicy: Retain is correct for an audit table and poisonous for a
+# retry: a rolled-back CREATE leaves the table behind, and the next create
+# fails with AWS::EarlyValidation::ResourceExistenceCheck and NO resource-level
+# event -- nothing in the output names the table.
+if aws dynamodb describe-table --table-name releasebot-ledger >/dev/null 2>&1; then
+  LS=$(aws cloudformation describe-stacks --stack-name releasebot-lambda \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo ABSENT)
+  case "$LS" in
+    CREATE_COMPLETE|UPDATE_COMPLETE|UPDATE_ROLLBACK_COMPLETE)
+      ok "releasebot-ledger exists and releasebot-lambda ($LS) owns it" ;;
+    *)
+      ROWS=$(aws dynamodb scan --table-name releasebot-ledger --select COUNT \
+        --max-items 1 --query Count --output text 2>/dev/null || echo unknown)
+      if [ "$ROWS" = "0" ]; then
+        warn "releasebot-ledger is orphaned and empty (stack: $LS)"
+        note "wreckage of a rolled-back create; bootstrap.sh removes it for you"
+      else
+        block "releasebot-ledger holds $ROWS row(s) and no healthy stack owns it"
+        note "it will block the compute stack's create with an early-validation"
+        note "error that never names the table. Import it, or move it aside."
+      fi ;;
+  esac
+else
+  ok "no leftover releasebot-ledger table"
+fi
+
+# A dead stack cannot be updated, only deleted. _update-stack.py does that
+# itself, but a standalone preflight should say so rather than let it surprise.
+for S in releasebot-iam releasebot-lambda releasebot-edge releasebot-network; do
+  ST=$(aws cloudformation describe-stacks --stack-name "$S" \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo ABSENT)
+  case "$ST" in
+    ROLLBACK_COMPLETE|REVIEW_IN_PROGRESS)
+      warn "$S is $ST — a dead stack; it will be deleted and recreated" ;;
+  esac
+done
 
 # ── 8. things only a real deploy teaches ───────────────────────────────────
 head "reminders that cost a day each"

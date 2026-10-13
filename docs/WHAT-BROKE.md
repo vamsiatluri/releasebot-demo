@@ -110,7 +110,7 @@ rather than to the code.
 
 `scripts/bootstrap.sh` was written from a working account and had never been run against
 nothing. Its first execution in a brand-new AWS account (450315222669, created for this)
-found **five real defects in a row**, none of which could surface anywhere else.
+found **seven real defects in a row**, none of which could surface anywhere else.
 
 | # | What happened | Why only an empty account shows it |
 |---|---|---|
@@ -120,27 +120,76 @@ found **five real defects in a row**, none of which could surface anywhere else.
 | 4 | The retry loop hammered a dead stack six times | A failed create leaves `ROLLBACK_COMPLETE`, which can be neither updated **nor** created. It must be deleted. The loop also printed "IAM not propagated" for *every* failure — a retry that cannot tell a transient failure from a permanent one is a way of not reading the error. |
 | 5 | `S3 Error Code: NoSuchKey` | Bootstrap uploaded **content-addressed** keys and never passed them to the template, so the functions pointed at the default `releasebot/cutrelease.zip`. The digest is the whole point and is useless if nothing is told about it. |
 
-### ⏳ Still open, and narrowed
+### #6 — the orphan a correct `DeletionPolicy` leaves behind
 
-The compute stack fails `AWS::EarlyValidation::ResourceExistenceCheck` with
+The compute stack failed `AWS::EarlyValidation::ResourceExistenceCheck` with
 **"Validation failed with 1 error(s)"** and **no resource-level event** — CloudFormation
-does not say which reference is unsatisfied.
+named nothing. Bisected with a five-rung resource ladder, one change-set per rung:
 
-Established so far, each by a separate change-set probe:
+```
+A_funcs_logs           CREATE_COMPLETE
+B_versions_aliases     CREATE_COMPLETE
+C_alarms               CREATE_COMPLETE
+D_ledger               FAILED      ← flips here
+E_full                 FAILED
+```
 
-- A minimal template (one function + the same role + the same S3 key) → **CREATE_COMPLETE**.
-  So the execution roles and the artifact are fine.
-- Removing the four `EventInvokeConfig` resources → still fails. Not them.
-- All four execution roles exist; both S3 objects exist at the exact keys passed.
+**Root cause: `releasebot-ledger` already existed.** `LedgerTable` carries
+`DeletionPolicy: Retain` — correct for an audit record of what shipped to production — so
+the *earlier* rolled-back create left the table behind with no stack owning it, and every
+retry after that failed on the table already existing.
 
-⚠️ One fix already made in passing is worth keeping regardless: the `EventInvokeConfig`
-blocks named their function as a **literal string**, which makes the existence check look
-for a function that already exists. `!Ref` returns the same name at runtime and declares the
-dependency.
+Proven in both directions rather than assumed:
 
-**Next step:** add resources back to the minimal template in halves — alias, log groups,
-ledger/DLQ/alarm, VPC config — until it flips. Roughly ninety seconds per round.
+```
+WITH the orphaned table present:
+  table-only                      FAILED
+  queue-and-alarm-only            CREATE_COMPLETE   ← so it is the table, not the stack
+removing the orphan…
+WITHOUT it:
+  table-only-after-cleanup        CREATE_COMPLETE
+  full-template-after-cleanup     CREATE_COMPLETE
+```
 
-★ The lesson stands whatever the last one turns out to be: **a build script written against
-an account that already has everything has never been tested.** Five of the five found here
-were invisible in the account it was written in.
+The trap is self-reinforcing: **every failed attempt re-creates the condition that makes
+the next attempt fail**, and the retry loop looks like a flaky account.
+
+`bootstrap.sh` now resolves it rather than documenting it. Before the compute stack it
+checks whether the table exists while no healthy stack owns it, and:
+
+- **zero rows** → it can only be wreckage of a rolled-back create. Delete it and continue.
+- **any rows** → that is real release history. **Stop**, and say so. Deleting an audit
+  table to get a green deploy is the wrong trade, and a script should not be the thing
+  that makes it.
+
+### #7 — a disable switch two functions never saw
+
+With the ledger orphan gone, the compute stack failed again:
+
+```
+Specified ReservedConcurrentExecutions for function decreases account's
+UnreservedConcurrentExecution below its minimum value of [10].
+```
+
+Bootstrap had read the real quota, printed `concurrency limit 10 — per-function
+reservation DISABLED`, and passed `ReservedConcurrency=0`. The switch was working. Two of
+the four functions simply **hardcoded `ReservedConcurrentExecutions: 2`** and never
+consulted it, and on an account whose total limit is 10 *any* reservation is refused.
+
+★ A parameter that most of the resources honour reads as working. The two that ignore it
+are invisible until you land in the one account where the difference matters.
+
+The lint added for it then found a **third** — `infra/50-slack-approve.yaml`, a different
+stack, which would have failed four steps later. `preflight.sh` now greps every template
+for a bare numeric reservation and treats one as a blocker.
+
+One more thing the same run fixed: preflight was raising the concurrency limit as a
+**blocker** while bootstrap was already compensating for it, so bootstrap refused to run on
+a condition it had itself handled. A check that fails on something the caller has already
+dealt with teaches people to pass `--skip-preflight`, which costs you every other check.
+It now downgrades to a warning when the caller declares the reservation disabled.
+
+★ The lesson: **a build script written against an account that already has everything has
+never been tested.** All seven were invisible in the account it was written in, and the last
+two were invisible even in the empty one until the one before them was fixed — defects
+queue up behind each other, so a single clean run proves more than any amount of review.

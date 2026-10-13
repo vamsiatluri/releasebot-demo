@@ -28,8 +28,24 @@ func main() {
 		return err
 	}()
 
+	// ⚠️ Logged at INIT, not at first invoke. Lambda writes nothing of its own
+	// when a handler returns an error, so without this the CloudWatch stream
+	// shows START / END / 1.25 ms and no reason at all behind a 502.
+	if initErr != nil {
+		handler.LogInitFailure("cut", initErr)
+	}
+
 	runtime.Start(func(ctx context.Context, inv runtime.Invocation, payload []byte) ([]byte, error) {
 		if initErr != nil {
+			// /health must still answer -- it is the endpoint that exists to
+			// report exactly this, and a 502 from it tells the operator
+			// nothing. Every other route refuses.
+			var probe events.APIGatewayProxyRequest
+			if json.Unmarshal(payload, &probe) == nil {
+				if resp, ok := handler.UnreadyResponse(probe, initErr); ok {
+					return resp, nil
+				}
+			}
 			return nil, fmt.Errorf("initialisation failed: %w", initErr)
 		}
 		// ⚠️ CHECKED FIRST, and on an explicit marker rather than on shape.

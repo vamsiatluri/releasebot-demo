@@ -41,6 +41,7 @@ probe = subprocess.run(
      "--query", "Stacks[0].Parameters", "--output", "json"],
     capture_output=True, text=True)
 exists = probe.returncode == 0
+deleted_dead = False
 
 # ⚠️ ROLLBACK_COMPLETE IS A DEAD STACK. A create that fails leaves the stack in
 # that state, and it can be neither updated NOR created -- so a retry loop
@@ -58,8 +59,15 @@ if exists:
         subprocess.run(["aws", "cloudformation", "wait", "stack-delete-complete",
                         "--stack-name", stack], check=False)
         exists = False
-        cur_override = []
-if not exists and "does not exist" not in probe.stderr:
+        deleted_dead = True
+# ⚠️ `deleted_dead` exists because the guard below reads probe.stderr to decide
+# whether "the stack is absent" or "the probe itself failed". After a
+# deliberate delete the probe SUCCEEDED (stderr is empty), so the guard fired
+# and exited 1 printing an empty error -- the caller reported "failed" with no
+# reason at all, which is worse than the original dead stack. A flag that says
+# why `exists` is False is the difference between a clean recreate and a
+# silent, reasonless failure.
+if not exists and not deleted_dead and "does not exist" not in probe.stderr:
     # A failure for any OTHER reason (no credentials, wrong region, throttling)
     # must not be silently treated as "the stack is new" -- that would turn a
     # permissions problem into a create attempt with a confusing error.

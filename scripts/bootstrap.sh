@@ -75,6 +75,7 @@ echo "account $ACCT · region $REGION · repo $OWNER/$REPO · network: $NETWORK_
 if [ "$SKIP_PREFLIGHT" = "0" ]; then
   step "0/9  preflight"
   EXISTING_VPC_ID="$VPC_ID" EXISTING_SUBNETS="$SUBNETS" \
+    RESERVED_DECIDED="$RESERVED" \
     GITHUB_OWNER="$OWNER" GITHUB_REPO="$REPO" bash scripts/preflight.sh
   RC=$?
   [ "$RC" = "1" ] && die "preflight found blockers — fix them or pass --skip-preflight"
@@ -145,14 +146,59 @@ make package >/dev/null || die "make package failed"
 # create fails with "S3 Error Code: NoSuchKey" naming a key you never wrote.
 # Found on the first real run of this script; the digest is the whole point and
 # it is useless if nothing is told about it.
-CUT_KEY=""; MERGE_KEY=""
-for ART in cutrelease mergeback; do
+# ⚠️ slackapprove belongs in THIS list. It was missing, so step 9 created a
+# function pointing at the template's default key `releasebot/slackapprove.zip`
+# -- which nothing had ever uploaded. The stack failed with NoSuchKey naming a
+# key that looks plausible, four steps away from the loop that was supposed to
+# write it. `make package` had been building the zip the whole time.
+CUT_KEY=""; MERGE_KEY=""; APPROVE_KEY=""
+for ART in cutrelease mergeback slackapprove; do
+  [ -f "build/$ART.zip" ] || die "make package did not produce build/$ART.zip"
   D=$(openssl dgst -sha256 -binary "build/$ART.zip" | xxd -p -c 32 | cut -c1-12)
   K="releasebot/$ART-$D.zip"
   aws s3 cp "build/$ART.zip" "s3://$BUCKET/$K" --only-show-errors || die "upload failed"
-  [ "$ART" = cutrelease ] && CUT_KEY="$K" || MERGE_KEY="$K"
+  case "$ART" in
+    cutrelease)   CUT_KEY="$K" ;;
+    mergeback)    MERGE_KEY="$K" ;;
+    slackapprove) APPROVE_KEY="$K" ;;
+  esac
   echo "  $ART -> $K"
 done
+
+# ── 4b. the retained-ledger trap ─────────────────────────────────────────────
+# ⚠️ LedgerTable is DeletionPolicy: Retain, which is right -- it is the audit
+# record of what shipped. The consequence is that a compute stack whose CREATE
+# rolls back leaves `releasebot-ledger` behind with no stack owning it, and
+# every subsequent create then fails on the table already existing. Worse, the
+# failure arrives as AWS::EarlyValidation::ResourceExistenceCheck with no
+# resource-level event, so nothing in the output names the table.
+#
+# An EMPTY orphan can only be the wreckage of a rolled-back create, so remove
+# it. A table with rows in it is real release history: stop, and let a human
+# decide, because deleting it to get a green deploy is the wrong trade.
+if aws dynamodb describe-table --table-name releasebot-ledger >/dev/null 2>&1; then
+  LSTATUS=$(aws cloudformation describe-stacks --stack-name releasebot-lambda \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo ABSENT)
+  case "$LSTATUS" in
+    CREATE_COMPLETE|UPDATE_COMPLETE|UPDATE_ROLLBACK_COMPLETE)
+      : ;;  # a live stack owns it — leave it alone
+    *)
+      ROWS=$(aws dynamodb scan --table-name releasebot-ledger --select COUNT \
+        --max-items 1 --query Count --output text 2>/dev/null || echo unknown)
+      if [ "$ROWS" = "0" ]; then
+        echo "  releasebot-ledger exists with no stack owning it and no rows —"
+        echo "  wreckage of a rolled-back create (DeletionPolicy: Retain). Removing it."
+        aws dynamodb delete-table --table-name releasebot-ledger >/dev/null \
+          || die "could not delete the orphaned ledger table"
+        aws dynamodb wait table-not-exists --table-name releasebot-ledger
+      else
+        die "releasebot-ledger exists with $ROWS row(s) and no healthy stack owns it.
+    That is real release history, so this script will not delete it. Either
+    import it into releasebot-lambda, or move it aside deliberately:
+      aws dynamodb delete-table --table-name releasebot-ledger --profile $PROFILE"
+      fi ;;
+  esac
+fi
 
 # ── 5. compute ──────────────────────────────────────────────────────────────
 step "5/9  compute (four functions, each with a live alias)"
@@ -186,6 +232,37 @@ for attempt in 1 2 3 4 5 6; do
   esac
   [ "$attempt" = 6 ] && die "compute stack failed after 6 attempts"
   sleep 10
+done
+
+# ── 5b. prove the ALIAS moved, not just that the stack went green ───────────
+# ⛔ THE CHECK THAT CAUGHT THE WORST DEFECT IN THIS SCRIPT. A deploy with a new
+# binary reported UPDATE_COMPLETE, updated $LATEST, and left `live` pointing at
+# the previous version -- so the stack was green and the old code was still
+# serving. Nothing about the stack's status can tell you this. The only thing
+# that can is reading the alias back and comparing what it actually serves
+# against the artifact you just uploaded.
+#
+# Verify at the destination, not at the transport.
+SHA_CUT=$(openssl dgst -sha256 -binary build/cutrelease.zip | openssl base64)
+SHA_MRG=$(openssl dgst -sha256 -binary build/mergeback.zip | openssl base64)
+for PAIR in "cutRelease=$SHA_CUT" "cutReleaseTest=$SHA_CUT" \
+            "releaseAutomationMergeback=$SHA_MRG" "releaseAutomationMergebackTest=$SHA_MRG"; do
+  FN="${PAIR%%=*}"; WANT="${PAIR#*=}"
+  GOT=$(aws lambda get-function --function-name "$FN" --qualifier live \
+    --query 'Configuration.CodeSha256' --output text 2>/dev/null)
+  VER=$(aws lambda get-alias --function-name "$FN" --name live \
+    --query FunctionVersion --output text 2>/dev/null)
+  if [ "$WANT" = "$GOT" ]; then
+    echo "  ✓ $FN live -> v$VER serves the artifact just uploaded"
+  else
+    die "$FN: the live alias serves v$VER, which is NOT the binary just uploaded.
+    expected CodeSha256 $WANT
+    alias serves      $GOT
+    The stack reported success and the OLD code is still live. Check that
+    AWS::Lambda::Version's Description carries the content-addressed artifact
+    key -- a Version resource that does not change is never republished, so
+    the code lands on \$LATEST and the alias never moves."
+  fi
 done
 
 # ── 6. edge ─────────────────────────────────────────────────────────────────
@@ -232,10 +309,53 @@ if [ -n "$APPROVERS" ]; then
   API_ID=$(aws apigateway get-rest-apis --query "items[?name=='releasebot'].id | [0]" --output text)
   BETA_ID=$(aws apigateway get-resources --rest-api-id "$API_ID" \
     --query "items[?pathPart=='beta'].id | [0]" --output text)
+  # ⚠️ Three parameters here are credentials or someone else's identifiers, and
+  # this stack has no defaults for them -- so the first run used to abort with
+  # "[SlackSigningSecret, GitHubApprovalToken, GitHubEnvironmentId] must have
+  # values", which reads like a broken script rather than like work a human
+  # still owes. The stack has to exist BEFORE set-approval-token.sh can fill in
+  # the token (it updates one parameter and carries the rest forward), so the
+  # right answer is to create it with values that FAIL CLOSED and say so.
+  #
+  # The environment id is not a secret and the GitHub API hands it over for a
+  # public repo, so fetch it rather than asking.
+  ENV_ID=$(curl -fsS "https://api.github.com/repos/$OWNER/$REPO/environments" 2>/dev/null \
+    | python3 -c 'import sys,json
+d=json.load(sys.stdin)
+for e in d.get("environments",[]):
+    if e["name"] in ("production","prod"):
+        print(e["id"]); break
+else:
+    print("")' 2>/dev/null)
+  if [ -z "$ENV_ID" ]; then
+    ENV_ID=0
+    echo "  ⚠ no 'production' environment on $OWNER/$REPO — GitHubEnvironmentId=0"
+    echo "    create the environment, then rerun with the real id; an approval"
+    echo "    posted against environment 0 is rejected by GitHub, not accepted."
+  fi
+  # A signing secret that cannot verify anything makes every Slack request fail
+  # its HMAC check, and an unset token makes every approval fail at GitHub.
+  # Both are the safe direction: the endpoint is live and refuses everything.
+  SIGNING="${SLACK_SIGNING_SECRET:-UNSET-see-docs/CONNECTING-SLACK-AND-JIRA.md}"
+  APPROVAL="${RELEASEBOT_APPROVAL_TOKEN:-UNSET-run-scripts/set-approval-token.sh}"
+  # Exported so _update-stack.py can read them from the environment. They must
+  # NOT become command-line arguments: argv is visible in `ps` to every process
+  # on the machine and lands in shell history.
+  export SIGNING APPROVAL
   python3 scripts/_update-stack.py releasebot-slack-approve infra/50-slack-approve.yaml \
-    "ArtifactBucket=$BUCKET" "RestApiId=$API_ID" "BetaResourceId=$BETA_ID" StageName=prod \
+    "ArtifactBucket=$BUCKET" "ArtifactKey=$APPROVE_KEY" \
+    "RestApiId=$API_ID" "BetaResourceId=$BETA_ID" StageName=prod \
     "SlackApprovers=$APPROVERS" "GitHubOwner=$OWNER" "GitHubRepo=$REPO" \
-    "VpcSubnetIds=$VPC_SUBNETS" "VpcSecurityGroupIds=$VPC_SG" || echo "  ⚠ slack-approve failed"
+    "GitHubEnvironmentId=$ENV_ID" \
+    "SlackSigningSecret=@SIGNING" "GitHubApprovalToken=@APPROVAL" \
+    "VpcSubnetIds=$VPC_SUBNETS" "VpcSecurityGroupIds=$VPC_SG" \
+    "ReservedConcurrency=$(if [ "$RESERVED" = 0 ]; then echo 0; else echo 2; fi)" \
+    || echo "  ⚠ slack-approve failed"
+  case "$SIGNING$APPROVAL" in
+    *UNSET*) echo "  approval endpoint deployed and FAILING CLOSED — it rejects every"
+             echo "  request until the signing secret and approval token are set" ;;
+    *) echo "  approval endpoint deployed with a signing secret and token from the environment" ;;
+  esac
 else
   echo "  slack-approve skipped (--approvers U123,U456)"
 fi
@@ -244,6 +364,26 @@ if [ -n "$ADMIN_EMAIL" ]; then
 else
   echo "  dashboard skipped (--admin-email you@example.com)"
 fi
+
+# ── 10. ask the thing you just built whether it is alive ────────────────────
+# A build script that never calls its own endpoint is reporting on its
+# intentions. Both stages are probed; prod is EXPECTED to answer 503-unready
+# until the credentials are set, and saying so here is the difference between
+# a documented state and an operator debugging a 502 at 9am.
+step "verify  both stages answer"
+for S in prod test; do
+  CODE=$(curl -s -o /tmp/rb-health.$$ -w '%{http_code}' --max-time 15 \
+    "$BASE/$S/beta/health" 2>/dev/null || echo 000)
+  case "$CODE" in
+    200) echo "  ✓ /$S 200 — ready: $(sed -n 's/.*"commit":"\([^"]*\)".*/commit \1/p' /tmp/rb-health.$$)" ;;
+    503) echo "  • /$S 503 — UNREADY, and reporting why (expected before credentials):"
+         echo "      $(sed -n 's/.*"reason":"\([^"]*\)".*/\1/p' /tmp/rb-health.$$)" ;;
+    000) echo "  ⚠ /$S did not respond within 15s" ;;
+    *)   echo "  ⚠ /$S returned $CODE — unexpected; check the function's log group"
+         head -c 200 /tmp/rb-health.$$; echo ;;
+  esac
+  rm -f /tmp/rb-health.$$
+done
 
 cat <<EOS
 
