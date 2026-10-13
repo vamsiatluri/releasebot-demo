@@ -629,6 +629,95 @@
         <p class="out">Output: "the production account behaves like the dev account" stops
            being an opinion.</p></div></div>
 
+      <h3>★ Phase 04, actually run — two accounts, 2026-10-13</h3>
+      <p>Not described. Run. A source account accumulated over a week of hand deploys, against
+         a target built from empty by one command, then both captured and diffed.</p>
+      <div class="tblwrap"><table class="tbl">
+        <thead><tr><th>Side</th><th>Account</th><th>How it was built</th></tr></thead>
+        <tbody>
+          <tr><td>A — source</td><td><code>826653639065</code></td><td>a week of hand deploys, like a real dev account</td></tr>
+          <tr><td>B — target</td><td><code>450315222669</code></td><td><code>bootstrap.sh</code>, one command, from empty</td></tr>
+        </tbody>
+      </table></div>
+      <p>The target came up with <strong>all seven stacks created on the first run</strong>, the
+         alias read-back check passed for all four functions, and <code>/test</code> answered
+         200. Then it was destroyed — its entire life was empty → build → capture → compare →
+         gone.</p>
+
+      <div class="flag hard"><strong>⛔ A separate ACCOUNT, not a second VPC — and the reason
+        was learned the expensive way.</strong>
+        <p><strong>IAM is global.</strong> An earlier attempt ran the target in a second
+        <em>region</em> of the same account and collided on execution role names:
+        <code>releasebot-exec-cutrelease</code> can exist once per account, not once per region.
+        A parallel run inside one account cannot use the real names — so it cannot prove the
+        thing it exists to prove. It is also what the engagement actually is: two accounts.</p>
+      </div>
+
+      <h4>★ What the run found that nothing else would have</h4>
+      <pre><code>SOURCE                              TARGET
+cutRelease      emXCd2ym1cwVPMDp    cutRelease      6+jHsG60wNvR+pdo
+cutReleaseTest  Qnm8g5UFMOQAQHOE    cutReleaseTest  6+jHsG60wNvR+pdo   ← same</code></pre>
+      <p><strong>Production and test are running different binaries in the source account.</strong>
+         The target shares one artifact across both environments — build once, deploy many, the
+         invariant this architecture exists to hold. The source does not, because its functions
+         were deployed at different moments.</p>
+      <div class="flag"><strong>That is the drift a hand-maintained account accumulates, and the
+        comparison is the only thing that shows it.</strong> No template, no review and no
+        green deploy would have told you. It is also the single best argument for running
+        Phase 04 at all rather than treating it as a formality.</div>
+      <p>Two smaller findings from the same run: the source runs the previous-generation runtime
+         (<code>provided.al2</code> against the template's <code>al2023</code>), and four log
+         groups survive from throwaway network probes — the probe functions delete themselves,
+         their log groups do not.</p>
+
+      <h4>⛔ And the comparator itself was 39% noise</h4>
+      <pre><code>iam/releasebot-dashboard-ApiRole-X1Lyy4HP4DBG   A: absent    B: present
+iam/releasebot-dashboard-ApiRole-ttjoWT4DNnuB   A: present   B: absent</code></pre>
+      <p>The same role, from the same template, in two accounts. CloudFormation generates
+         <code>&lt;stack&gt;-&lt;LogicalId&gt;-&lt;RANDOM&gt;</code> for any resource a template
+         does not name, and <strong>that suffix can never match across accounts</strong> — so
+         each one produced two permanent blockers. <strong>12 of the first 31 differences were
+         this.</strong></p>
+      <div class="flag hard"><strong>That matters more than the count.</strong> The parallel run
+        exists to drive differences to <em>zero</em> and then trust the number. A comparator with
+        a permanent floor of noise teaches people to ignore its output — so the noise is not
+        cosmetic, it disables the control. Fixed by comparing stack-owned resources on their
+        logical name: <strong>14 blockers → 10</strong>, and every survivor is real.
+        <p>⚠️ Scoped to stack-owned resources only. A hand-made role that happens to end in
+        something suffix-shaped keeps its whole name — a false <em>match</em> between two
+        different roles is the expensive direction; a false difference is merely noisy.</p>
+      </div>
+
+      <h4>Running assess for the first time found two more</h4>
+      <ul>
+        <li><strong>The name filter hid five of six functions.</strong>
+            <code>--prefix releasebot</code> — the obvious thing to type for a project called
+            ReleaseBot — matched only the dashboard API, because the functions are named
+            <code>cutRelease</code>, <code>slackApprove</code> and so on. It reported
+            <em>"1 functions, 1 roles, 1 APIs · 2 blockers"</em>: a thorough-looking read of one
+            sixth of the system, and on day one in someone else's account it would have missed
+            the application. <strong>The output of a filter that hides most of an account is
+            indistinguishable from a small account.</strong> It now reports its own scope as a
+            blocker when it drops more than it keeps.</li>
+        <li><strong>It reported the hardening as the defect.</strong> Seven blockers said
+            <em>"holds secret values in environment variables"</em> — five of them about
+            functions that now hold <code>ssm:</code> <em>references</em>. The capture records
+            names and never values, deliberately, so the review judged by name alone.
+            <strong>A tool that reads identically before and after the work cannot show a
+            control is in place</strong>, and worse, it tells the next person to undo it. It now
+            classifies by the value's shape. <strong>7 blockers → 1</strong>, the survivor
+            real.</li>
+      </ul>
+
+      <h4>How to re-run it</h4>
+      <pre><code>scripts/assess.sh &lt;source-profile&gt; &lt;region&gt; \
+  --against &lt;target-profile&gt; &lt;region&gt;
+
+# exit 0 clean · 1 a blocking difference · 2 warnings · 3 the tool failed</code></pre>
+      <p>Read-only against both accounts, so it is safe to point at production — which is the
+         whole idea. The inventory you can trust is the one taken from the running system, not
+         from the templates somebody believes are current.</p>
+
       <div class="phase"><div class="n">05</div><div>
         <h4>Cutover — move the pointers, not the system</h4>
         <p>Slack slash commands and the Jira webhook are repointed. Everything else was
