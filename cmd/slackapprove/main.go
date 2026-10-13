@@ -17,15 +17,45 @@ import (
 
 	"github.com/vamsiatluri/releasebot-migration/internal/events"
 	"github.com/vamsiatluri/releasebot-migration/internal/runtime"
+	"github.com/vamsiatluri/releasebot-migration/internal/secretref"
 	"github.com/vamsiatluri/releasebot-migration/internal/slackapprove"
 	"github.com/vamsiatluri/releasebot-migration/internal/slackverify"
 )
 
 func main() {
 	envID, _ := strconv.Atoi(os.Getenv("GITHUB_ENVIRONMENT_ID"))
+
+	// ⛔ THIS FUNCTION HELD THE TWO WORST SECRETS IN THE SYSTEM IN PLAINTEXT.
+	// The Slack signing secret is the only thing proving a request is from
+	// Slack, and the approval token is a CLASSIC PAT with `repo` — it can push
+	// to every repository its owner can reach. Both were readable by anyone
+	// with lambda:GetFunctionConfiguration, in the console.
+	//
+	// Resolved at INIT from a reference. A literal still works unchanged, so
+	// the contract tests and the dev account are untouched.
+	//
+	// ⚠️ An INIT that cannot resolve a secret must FAIL, not continue with an
+	// empty one: an empty signing secret verifies nothing and rejects every
+	// request, which reads as a Slack outage rather than a config error. The
+	// error is logged where an operator will see it and the handler refuses.
+	resolveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	signing, errSign := secretref.Resolve(resolveCtx, os.Getenv("SLACK_SIGNING_SECRET"))
+	token, errTok := secretref.Resolve(resolveCtx, os.Getenv("GITHUB_APPROVAL_TOKEN"))
+	cancel()
+	for name, err := range map[string]error{"SLACK_SIGNING_SECRET": errSign, "GITHUB_APPROVAL_TOKEN": errTok} {
+		if err != nil {
+			// ⚠️ %v of this error never carries the value — see secretref.
+			fmt.Fprintf(os.Stderr, "INIT FAILED resolving %s: %v\n", name, err)
+		}
+	}
+	initErr := errSign
+	if initErr == nil {
+		initErr = errTok
+	}
+
 	cfg := slackapprove.Config{
-		SigningSecret: os.Getenv("SLACK_SIGNING_SECRET"),
-		GitHubToken:   os.Getenv("GITHUB_APPROVAL_TOKEN"),
+		SigningSecret: signing,
+		GitHubToken:   token,
 		GitHubAPI:     envOr("RELEASEBOT_GITHUB_API_URL", "https://api.github.com"),
 		Owner:         os.Getenv("GITHUB_OWNER"),
 		Repo:          os.Getenv("GITHUB_REPO"),
@@ -34,6 +64,11 @@ func main() {
 	}
 
 	runtime.Start(func(ctx context.Context, inv runtime.Invocation, p []byte) ([]byte, error) {
+		// Fail closed. An unresolved secret must never fall back to "" --
+		// that would make every HMAC comparison fail and look like Slack.
+		if initErr != nil {
+			return nil, fmt.Errorf("initialisation failed: could not resolve a secret")
+		}
 		var req events.APIGatewayProxyRequest
 		if err := json.Unmarshal(p, &req); err != nil {
 			return nil, fmt.Errorf("not an API Gateway event: %w", err)

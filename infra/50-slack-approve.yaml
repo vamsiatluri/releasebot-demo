@@ -36,10 +36,37 @@ Parameters:
       -- the handler fails closed. Read as "allow everyone", a blank value would
       turn a misconfiguration into an open door on a public endpoint that can
       deploy to production.
-  SlackSigningSecret: {Type: String, NoEcho: true}
+  # ── The two secrets: a NAME, never a value ──────────────────────────────
+  # ⚠️ A NoEcho CloudFormation parameter is masked in describe-stacks and is
+  # STILL a value that travelled through a template, a change set, and whatever
+  # archives change sets. Passing the parameter NAME instead means the secret
+  # never enters CloudFormation at all -- it is written once by
+  # scripts/set-secret.sh and read at INIT.
+  #
+  # Empty keeps the old behaviour: the literal in SlackSigningSecret is used.
+  # That is deliberate, so this template can be deployed before the secrets are
+  # migrated and the cutover is a parameter change rather than a rewrite.
+  # ⚠️ A DISTINCT NAME from the release functions' signing secret, which holds a
+  # DIFFERENT value. Pointing both at one parameter would silently change one
+  # component's behaviour, and "they are both the Slack signing secret" is an
+  # assumption about two values that are not equal. If they SHOULD be the same,
+  # that is a deliberate change with its own verification, not a side effect of
+  # tidying parameter names.
+  SlackSigningSecretParam:
+    Type: String
+    Default: /releasebot/prod/secrets/slack-approve-signing-secret
+    Description: SSM SecureString parameter NAME holding the Slack signing secret.
+  GitHubApprovalTokenParam:
+    Type: String
+    Default: /releasebot/prod/secrets/github-approval-token
+    Description: >
+      SSM SecureString parameter NAME holding the CLASSIC PAT used to approve
+      deployments. ⛔ A fine-grained token cannot approve one at all.
+  SlackSigningSecret: {Type: String, NoEcho: true, Default: ''}
   GitHubApprovalToken:
     Type: String
     NoEcho: true
+    Default: ''
     Description: >
       ⛔ A CLASSIC PAT with the `repo` scope. A FINE-GRAINED token CANNOT approve
       a deployment at all -- not with any permission set. It returns 403 even
@@ -62,6 +89,13 @@ Parameters:
 Conditions:
   InVpc: !Not [!Equals [!Join ['', !Ref VpcSubnetIds], '']]
   CapConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
+  # References win when BOTH names are given. Requiring both prevents the
+  # half-migrated state where one secret is a reference and the other is still
+  # a literal -- /health would report "mixed", and a partly-hardened function
+  # that reads as hardened is the failure this whole change is about.
+  UseSecretRefs: !And
+    - !Not [!Equals [!Ref SlackSigningSecretParam, '']]
+    - !Not [!Equals [!Ref GitHubApprovalTokenParam, '']]
 
 Resources:
 
@@ -80,6 +114,36 @@ Resources:
         # AS THIS ROLE, and without it UpdateFunctionConfiguration is rejected
         # with an error naming CreateNetworkInterface but not the policy.
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+      Policies:
+        # ── Reading its own two secrets, and nothing else ──────────────────
+        # This function holds the two most dangerous values in the system: the
+        # Slack signing secret, which is the only thing proving a request came
+        # from Slack, and a CLASSIC PAT with `repo`, which can push to every
+        # repository its owner can reach. They were plaintext environment
+        # variables, readable by anyone with lambda:GetFunctionConfiguration.
+        #
+        # ⚠️ Scoped to the two parameter names, NOT to the prefix. This
+        # function has no reason to read the release functions' configuration,
+        # and a prefix grant would let it.
+        - PolicyName: read-its-own-secrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [ssm:GetParameter]
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SlackSigningSecretParam}'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${GitHubApprovalTokenParam}'
+              # ⛔ ViaService must name SSM. A SecureString decrypt goes via
+              # ssm, not secretsmanager, and getting this wrong fails with an
+              # AccessDenied that names KMS -- so the instinct is to widen the
+              # key policy, which cannot fix a wrong condition.
+              - Effect: Allow
+                Action: [kms:Decrypt]
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub 'ssm.${AWS::Region}.amazonaws.com'
 
   LogGroup:
     Type: AWS::Logs::LogGroup
@@ -111,8 +175,17 @@ Resources:
         - !Ref 'AWS::NoValue'
       Environment:
         Variables:
-          SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
-          GITHUB_APPROVAL_TOKEN: !Ref GitHubApprovalToken
+          # A reference, resolved at INIT by internal/secretref. A literal
+          # still works unchanged -- that is what lets the dev account and the
+          # contract tests keep passing values.
+          SLACK_SIGNING_SECRET: !If
+            - UseSecretRefs
+            - !Sub 'ssm:${SlackSigningSecretParam}'
+            - !Ref SlackSigningSecret
+          GITHUB_APPROVAL_TOKEN: !If
+            - UseSecretRefs
+            - !Sub 'ssm:${GitHubApprovalTokenParam}'
+            - !Ref GitHubApprovalToken
           GITHUB_OWNER: !Ref GitHubOwner
           GITHUB_REPO: !Ref GitHubRepo
           GITHUB_ENVIRONMENT_ID: !Ref GitHubEnvironmentId

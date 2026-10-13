@@ -295,12 +295,22 @@ Resources:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretsPrefix}/prod/*'
+              # ⛔ BOTH SERVICES. kms:ViaService scoped to Secrets Manager
+              # alone silently refuses a Parameter Store SecureString read --
+              # that decrypt goes via SSM, not Secrets Manager. The failure
+              # arrives as an AccessDenied naming KMS, so the obvious reading
+              # is "the key policy is wrong" and the obvious fix is to widen
+              # the key policy, which changes nothing. The condition is the
+              # thing that was wrong, and it was wrong in the direction that
+              # looks correct.
               - Effect: Allow
                 Action: [kms:Decrypt]
                 Resource: '*'
                 Condition:
                   StringEquals:
-                    kms:ViaService: !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+                    kms:ViaService:
+                      - !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+                      - !Sub 'ssm.${AWS::Region}.amazonaws.com'
 
   CutReleaseTestExecutionRole:
     Type: AWS::IAM::Role
@@ -399,12 +409,22 @@ Resources:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretsPrefix}/test/*'
+              # ⛔ BOTH SERVICES. kms:ViaService scoped to Secrets Manager
+              # alone silently refuses a Parameter Store SecureString read --
+              # that decrypt goes via SSM, not Secrets Manager. The failure
+              # arrives as an AccessDenied naming KMS, so the obvious reading
+              # is "the key policy is wrong" and the obvious fix is to widen
+              # the key policy, which changes nothing. The condition is the
+              # thing that was wrong, and it was wrong in the direction that
+              # looks correct.
               - Effect: Allow
                 Action: [kms:Decrypt]
                 Resource: '*'
                 Condition:
                   StringEquals:
-                    kms:ViaService: !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+                    kms:ViaService:
+                      - !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+                      - !Sub 'ssm.${AWS::Region}.amazonaws.com'
 
   MergebackExecutionRole:
     Type: AWS::IAM::Role
@@ -501,12 +521,22 @@ Resources:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretsPrefix}/prod/*'
+              # ⛔ BOTH SERVICES. kms:ViaService scoped to Secrets Manager
+              # alone silently refuses a Parameter Store SecureString read --
+              # that decrypt goes via SSM, not Secrets Manager. The failure
+              # arrives as an AccessDenied naming KMS, so the obvious reading
+              # is "the key policy is wrong" and the obvious fix is to widen
+              # the key policy, which changes nothing. The condition is the
+              # thing that was wrong, and it was wrong in the direction that
+              # looks correct.
               - Effect: Allow
                 Action: [kms:Decrypt]
                 Resource: '*'
                 Condition:
                   StringEquals:
-                    kms:ViaService: !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+                    kms:ViaService:
+                      - !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+                      - !Sub 'ssm.${AWS::Region}.amazonaws.com'
 
   MergebackTestExecutionRole:
     Type: AWS::IAM::Role
@@ -603,12 +633,22 @@ Resources:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretsPrefix}/test/*'
+              # ⛔ BOTH SERVICES. kms:ViaService scoped to Secrets Manager
+              # alone silently refuses a Parameter Store SecureString read --
+              # that decrypt goes via SSM, not Secrets Manager. The failure
+              # arrives as an AccessDenied naming KMS, so the obvious reading
+              # is "the key policy is wrong" and the obvious fix is to widen
+              # the key policy, which changes nothing. The condition is the
+              # thing that was wrong, and it was wrong in the direction that
+              # looks correct.
               - Effect: Allow
                 Action: [kms:Decrypt]
                 Resource: '*'
                 Condition:
                   StringEquals:
-                    kms:ViaService: !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+                    kms:ViaService:
+                      - !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+                      - !Sub 'ssm.${AWS::Region}.amazonaws.com'
 
 Outputs:
   DeployRoleArn:

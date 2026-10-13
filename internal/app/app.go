@@ -17,11 +17,19 @@ import (
 	"github.com/vamsiatluri/releasebot-migration/internal/obs"
 	"github.com/vamsiatluri/releasebot-migration/internal/paramstore"
 	"github.com/vamsiatluri/releasebot-migration/internal/release"
+	"github.com/vamsiatluri/releasebot-migration/internal/secretref"
 	"github.com/vamsiatluri/releasebot-migration/internal/slackclient"
 )
 
 func Build(ctx context.Context, action handler.Action, alias string, ackOnly bool) (*handler.Handler, error) {
-	cfg, err := config.Load(ctx, config.EnvResolver)
+	// ⚠️ secretref.Resolve, NOT config.EnvResolver. A value with no scheme is
+	// returned unchanged, so the harness and the dev account keep passing
+	// literals; a value of the form ssm:/path is read from a SecureString at
+	// INIT. That is what lets the published version freeze a POINTER to the
+	// secret rather than the secret — and therefore what makes rotation a
+	// Parameter Store write instead of a deploy that strands every older
+	// version as a rollback target.
+	cfg, err := config.Load(ctx, secretref.Resolve)
 	if err != nil {
 		return nil, err
 	}

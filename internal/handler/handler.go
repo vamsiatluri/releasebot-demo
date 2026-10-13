@@ -25,6 +25,7 @@ import (
 	"github.com/vamsiatluri/releasebot-migration/internal/lambdainvoke"
 	"github.com/vamsiatluri/releasebot-migration/internal/obs"
 	"github.com/vamsiatluri/releasebot-migration/internal/release"
+	"github.com/vamsiatluri/releasebot-migration/internal/secretref"
 	"github.com/vamsiatluri/releasebot-migration/internal/slackclient"
 	"github.com/vamsiatluri/releasebot-migration/internal/slackverify"
 )
@@ -88,12 +89,17 @@ func (h *Handler) Handle(ctx context.Context, req events.APIGatewayProxyRequest)
 		// configSource and configPath are reported on purpose. A fallback to
 		// environment variables is survivable but must never be SILENT -- a
 		// degraded config that looks healthy is worse than a loud failure.
+		// ⚠️ secretSource reports the MECHANISM, never a value. Without it
+		// there is no way to tell a function whose secrets are SecureString
+		// references from one holding them in plaintext env vars, short of
+		// reading the secrets -- so "we hardened it" would be unverifiable
+		// from outside, which is how a half-finished rollout looks finished.
 		return events.JSON(200, fmt.Sprintf(
 			`{"ok":true,"env":%q,"action":%q,"stage":%q,"commit":%q,"built":%q,`+
-				`"configSource":%q,"configPath":%q,`+
+				`"configSource":%q,"configPath":%q,"secretSource":%q,`+
 				`"defaultOwner":%q,"defaultBranch":%q,"slackChannel":%q,"datadogService":%q}`,
 			h.Cfg.Env, h.Action, req.RequestContext.Stage, BuildCommit, BuildTime,
-			h.Cfg.ConfigSource, h.Cfg.ConfigPath,
+			h.Cfg.ConfigSource, h.Cfg.ConfigPath, secretSource(),
 			h.Cfg.DefaultOwner, h.Cfg.DefaultBranch, h.Cfg.SlackChannel, h.Cfg.DatadogService))
 	}
 
@@ -333,4 +339,37 @@ func (h *Handler) HandleAsync(ctx context.Context, j AsyncJob) {
 	}
 	log.Info("async job received")
 	h.finish(ctx, log, j.Command, j.ResponseURL)
+}
+
+// secretSource reports how the secret-bearing values were supplied, by reading
+// the REFERENCES in the environment rather than the resolved values.
+//
+// ⚠️ It must never report the value, and must never claim more than it knows.
+// "reference" means every secret-bearing variable that is set carries a scheme;
+// "plaintext" means at least one holds a literal; "unset" means none is set,
+// which is the dry-run and harness case and is not a finding.
+func secretSource() string {
+	keys := []string{"GITHUB_TOKEN", "SLACK_TOKEN", "SLACK_SIGNING_SECRET",
+		"JIRA_TOKEN", "JIRA_WEBHOOK_SECRET", "DD_API_KEY"}
+	var set, refs int
+	for _, k := range keys {
+		v := os.Getenv(k)
+		if v == "" {
+			continue
+		}
+		set++
+		if secretref.IsReference(v) {
+			refs++
+		}
+	}
+	switch {
+	case set == 0:
+		return "unset"
+	case refs == set:
+		return "reference"
+	case refs == 0:
+		return "plaintext"
+	default:
+		return fmt.Sprintf("mixed (%d of %d by reference)", refs, set)
+	}
 }

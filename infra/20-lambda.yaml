@@ -74,6 +74,30 @@ Parameters:
   DefaultOwner:       {Type: String, Default: 'msnbc'}
   SlackChannel:       {Type: String, Default: ''}
   SecretsPrefix:      {Type: String, Default: 'releasebot'}
+
+  # ── Secrets by REFERENCE ────────────────────────────────────────────────────
+  # ⛔ These four were PLAINTEXT Lambda environment variables -- a 93-character
+  # GitHub token among them, readable by anyone with
+  # lambda:GetFunctionConfiguration, and frozen into every published version.
+  #
+  # Set UseSecretReferences=true and each variable holds `ssm:<path>/<name>`,
+  # resolved at INIT by internal/secretref. A literal still works unchanged, so
+  # the dev account, the contract tests and the local harness are untouched --
+  # and the cutover is a parameter flip rather than a rewrite.
+  #
+  # ⚠️ The path deliberately ends in /secrets/, a level BELOW the config path.
+  # paramstore.Load reads /releasebot/<env>/ with Recursive:false and
+  # WithDecryption:true, so a secret stored as an immediate child would be
+  # fetched into memory on every INIT for no reason. One level down, it is not.
+  UseSecretReferences:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true','false']
+    Description: >
+      true = the four secret-bearing variables carry ssm: references instead of
+      values. The SecureStrings must exist first -- write them with
+      scripts/set-secret.sh, never through this template (a NoEcho parameter is
+      still a value that travelled through a change set).
   LogRetentionDays:   {Type: Number, Default: 30}
   AlarmTopicArn:      {Type: String, Default: ''}
   DatadogExtensionArn:
@@ -94,6 +118,7 @@ Parameters:
       bundled into the migration.
 
 Conditions:
+  SecretRefs: !Equals [!Ref UseSecretReferences, 'true']
   CapConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
   InVpc:     !Not [!Equals [!Join ['', !Ref VpcSubnetIds], '']]
   TestInVpc: !Not [!Equals [!Join ['', !Ref TestVpcSubnetIds], '']]
@@ -253,10 +278,10 @@ Resources:
           DD_ENV: prod
           DD_SITE: datadoghq.com
           DD_TRACE_ENABLED: 'true'
-          GITHUB_TOKEN: !Ref GitHubToken
-          SLACK_TOKEN: !Ref SlackToken
-          SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
-          JIRA_WEBHOOK_SECRET: !Ref JiraWebhookSecret
+          GITHUB_TOKEN: !If [SecretRefs, 'ssm:/releasebot/prod/secrets/github-token', !Ref GitHubToken]
+          SLACK_TOKEN: !If [SecretRefs, 'ssm:/releasebot/prod/secrets/slack-token', !Ref SlackToken]
+          SLACK_SIGNING_SECRET: !If [SecretRefs, 'ssm:/releasebot/prod/secrets/slack-signing-secret', !Ref SlackSigningSecret]
+          JIRA_WEBHOOK_SECRET: !If [SecretRefs, 'ssm:/releasebot/prod/secrets/jira-webhook-secret', !Ref JiraWebhookSecret]
       Tags:
         - {Key: app,        Value: releasebot}
         - {Key: migration,  Value: msnbc-dev-to-msnbc-prod}
@@ -316,10 +341,10 @@ Resources:
           RELEASEBOT_ACK_ONLY: '1'
           DD_SERVICE: releasebot
           DD_ENV: test
-          GITHUB_TOKEN: !Ref GitHubToken
-          SLACK_TOKEN: !Ref SlackToken
-          SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
-          JIRA_WEBHOOK_SECRET: !Ref JiraWebhookSecret
+          GITHUB_TOKEN: !If [SecretRefs, 'ssm:/releasebot/test/secrets/github-token', !Ref GitHubToken]
+          SLACK_TOKEN: !If [SecretRefs, 'ssm:/releasebot/test/secrets/slack-token', !Ref SlackToken]
+          SLACK_SIGNING_SECRET: !If [SecretRefs, 'ssm:/releasebot/test/secrets/slack-signing-secret', !Ref SlackSigningSecret]
+          JIRA_WEBHOOK_SECRET: !If [SecretRefs, 'ssm:/releasebot/test/secrets/jira-webhook-secret', !Ref JiraWebhookSecret]
           DD_SITE: datadoghq.com
       Tags:
         - {Key: app, Value: releasebot}
@@ -367,10 +392,10 @@ Resources:
           RELEASEBOT_ACK_ONLY: '1'
           DD_SERVICE: releasebot
           DD_ENV: prod
-          GITHUB_TOKEN: !Ref GitHubToken
-          SLACK_TOKEN: !Ref SlackToken
-          SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
-          JIRA_WEBHOOK_SECRET: !Ref JiraWebhookSecret
+          GITHUB_TOKEN: !If [SecretRefs, 'ssm:/releasebot/prod/secrets/github-token', !Ref GitHubToken]
+          SLACK_TOKEN: !If [SecretRefs, 'ssm:/releasebot/prod/secrets/slack-token', !Ref SlackToken]
+          SLACK_SIGNING_SECRET: !If [SecretRefs, 'ssm:/releasebot/prod/secrets/slack-signing-secret', !Ref SlackSigningSecret]
+          JIRA_WEBHOOK_SECRET: !If [SecretRefs, 'ssm:/releasebot/prod/secrets/jira-webhook-secret', !Ref JiraWebhookSecret]
       Tags:
         - {Key: app, Value: releasebot}
 
@@ -421,10 +446,10 @@ Resources:
           RELEASEBOT_ACK_ONLY: '1'
           DD_SERVICE: releasebot
           DD_ENV: test
-          GITHUB_TOKEN: !Ref GitHubToken
-          SLACK_TOKEN: !Ref SlackToken
-          SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
-          JIRA_WEBHOOK_SECRET: !Ref JiraWebhookSecret
+          GITHUB_TOKEN: !If [SecretRefs, 'ssm:/releasebot/test/secrets/github-token', !Ref GitHubToken]
+          SLACK_TOKEN: !If [SecretRefs, 'ssm:/releasebot/test/secrets/slack-token', !Ref SlackToken]
+          SLACK_SIGNING_SECRET: !If [SecretRefs, 'ssm:/releasebot/test/secrets/slack-signing-secret', !Ref SlackSigningSecret]
+          JIRA_WEBHOOK_SECRET: !If [SecretRefs, 'ssm:/releasebot/test/secrets/jira-webhook-secret', !Ref JiraWebhookSecret]
       Tags:
         - {Key: app, Value: releasebot}
 
