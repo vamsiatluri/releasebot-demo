@@ -16,9 +16,27 @@ BUILT       ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 PKG         := github.com/vamsiatluri/releasebot-migration/internal/handler
 LDFLAGS     := -s -w -X $(PKG).BuildCommit=$(COMMIT) -X $(PKG).BuildTime=$(BUILT)
 
+# ⛔ FUNCTIONS IS NOT EVERY cmd/. slackapprove and dashboardapi are deployed by
+# their own scripts, which build fresh into a temp directory -- deliberately,
+# because they are owned by different stacks with different parameters.
+#
+# THE TRAP THAT COST AN HOUR: `build/slackapprove.zip` existed on disk from a
+# hand-build weeks earlier. `make package` did not rebuild it (not in this
+# list) and did not remove it, so a later hand-upload took a STALE artifact.
+# Its content-addressed digest matched the old one -- correctly, the bytes
+# really were the old bytes -- so CloudFormation saw no change and the function
+# kept running code from before internal/secretref existed. Meanwhile the
+# template had switched its env var to `ssm:/releasebot/.../slack-signing-secret`,
+# and the OLD code read that PATH as the signing secret. Every Slack signature
+# failed with a 401 and nothing anywhere said why.
+#
+# ★ Content addressing proves an artifact is CONSISTENT. It cannot tell you it
+# is CURRENT. The `prune-stale` target below is what closes that gap.
 FUNCTIONS := cutrelease mergeback
+# Built elsewhere, listed here so prune-stale knows they are not abandoned.
+EXTERNALLY_BUILT := slackapprove dashboardapi
 
-.PHONY: all build package test lint clean local mocks demo verify-zip
+.PHONY: all build package test lint clean local mocks demo verify-zip prune-stale
 
 all: test build
 
@@ -35,9 +53,33 @@ package: build
 	  (cd $(BUILD_DIR)/$$f && zip -q -X ../$$f.zip bootstrap); \
 	  echo "packaged $(BUILD_DIR)/$$f.zip"; \
 	done
+	@$(MAKE) --no-print-directory prune-stale
 	@$(MAKE) --no-print-directory verify-zip
 
 # A packaging check that fails the build rather than failing at INIT in AWS.
+# Remove any zip this build did not produce.
+#
+# ⚠️ DELETE, do not warn. A warning in the middle of a build log is exactly
+# what nobody reads, and the failure mode is silent: the stale file is still
+# there, still uploadable, still looking current. A missing file forces whoever
+# needs it to run the script that builds it properly.
+prune-stale:
+	@for z in $(BUILD_DIR)/*.zip; do \
+	  [ -e "$$z" ] || continue; \
+	  n=$$(basename $$z .zip); \
+	  keep=""; \
+	  for f in $(FUNCTIONS); do [ "$$n" = "$$f" ] && keep=1; done; \
+	  if [ -z "$$keep" ]; then \
+	    for f in $(EXTERNALLY_BUILT); do \
+	      if [ "$$n" = "$$f" ]; then \
+	        echo "removing $$z — $$n is built by its own deploy script, and a stale"; \
+	        echo "  copy here is indistinguishable from a current one"; \
+	      fi; \
+	    done; \
+	    rm -f "$$z"; \
+	  fi; \
+	done
+
 verify-zip:
 	@for f in $(FUNCTIONS); do \
 	  entry=$$(unzip -Z1 $(BUILD_DIR)/$$f.zip | head -1); \

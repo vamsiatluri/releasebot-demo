@@ -20,6 +20,9 @@
 # verifies nothing.
 set -uo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# One trap for every temp file this script makes. ⚠️ bash traps REPLACE rather
+# than stack, so there must only ever be one EXIT trap here.
+trap 'rm -f /tmp/rb-slash.$$ /tmp/rb-slash-body.$$' EXIT
 STAGE="${1:-test}"
 export AWS_PAGER=""
 REGION="${AWS_REGION:-us-east-1}"
@@ -71,7 +74,11 @@ RESP=$(cat /tmp/rb-slash.$$ 2>/dev/null); rm -f /tmp/rb-slash.$$
 # are not permitted to cut releases" -- the prover printed "command accepted"
 # for a request that had been refused. A denylist of failures cannot anticipate
 # the next failure; the acknowledgement is a single known string, so match THAT.
-if [ "$CODE" = "200" ] && printf '%s' "$RESP" | grep -q "hourglass_flowing_sand"; then
+# ⚠️ The response went to a FILE above; grep that, never a pipe into grep -q.
+# With a tiny body printf usually wins the race and this "works" -- which makes
+# it an intermittent failure rather than an honest one.
+printf '%s' "$RESP" > /tmp/rb-slash-body.$$
+if [ "$CODE" = "200" ] && grep -q "hourglass_flowing_sand" /tmp/rb-slash-body.$$; then
   echo "✓ correctly signed  -> HTTP 200, command accepted"
   echo "    $(printf '%s' "$RESP" | head -c 300)"
 elif [ "$CODE" = "200" ]; then

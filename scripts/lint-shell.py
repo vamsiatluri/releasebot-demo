@@ -18,7 +18,19 @@ reads straight past.
 import glob, re, sys
 
 unbraced = re.compile(r'(?<!\$)\$([A-Za-z_][A-Za-z0-9_]*)([^\x00-\x7F])')
-pipefail_grepq = re.compile(r'curl[^|\n]*\|\s*grep\s+-q')
+# ⛔ ANY command piped into `grep -q`, not just curl.
+#
+# The original rule matched `curl ... | grep -q` because that is where this bug
+# was first found. It then MISSED `unzip -p ... | strings | grep -q`, which
+# failed in exactly the same way and reported that a binary lacked a symbol it
+# contained. The mechanism has nothing to do with curl: `grep -q` exits on the
+# first match, everything upstream gets SIGPIPE, and under `set -o pipefail`
+# the pipeline's status is that failure. So the rule is about `grep -q` at the
+# END of a pipe, whatever is upstream.
+#
+# ⚠️ Deliberately NOT flagged: `grep -q` with no pipe into it (reading a file is
+# fine), and `grep -q` that is not last in the pipeline.
+pipefail_grepq = re.compile(r'\|\s*grep\s+(-[a-zA-Z]*q[a-zA-Z]*)\s')
 
 def in_single_quotes(line, idx):
     """Is position idx inside a SINGLE-quoted string?
@@ -59,8 +71,9 @@ for f in sorted(glob.glob("scripts/*.sh")):
             bad += 1
         pg = pipefail_grepq.search(line)
         if pipefail and pg and not in_any_quotes(line, pg.start()):
-            print(f"{f}:{n}: a curl piped into grep -q under pipefail fails WHEN IT MATCHES. "
-                  f"Fetch to a file, then grep the file.")
+            print(f"{f}:{n}: a pipe into `grep -q` under pipefail fails WHEN IT MATCHES — "
+                  f"grep exits on the first hit and upstream gets SIGPIPE. "
+                  f"Write to a file first, then grep the file.")
             bad += 1
 
 print(f"  {len(glob.glob('scripts/*.sh'))} scripts checked, {bad} problem(s)")

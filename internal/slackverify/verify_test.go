@@ -2,6 +2,7 @@ package slackverify
 
 import (
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -64,5 +65,35 @@ func TestVerifyRejectsTheOldSecretAfterRotation(t *testing.T) {
 	sigFromOldSecret := Sign("old-dev-account-secret", ts, body)
 	if err := Verify(secret, sigFromOldSecret, ts, body, now); !errors.Is(err, ErrSignature) {
 		t.Fatalf("expected ErrSignature, got %v", err)
+	}
+}
+
+// ⛔ The hour-long failure this prevents: a function deployed with a binary
+// that predates the secret resolver, while its environment already holds
+// `ssm:/path`. The old code HMAC'd 57 characters of parameter path and every
+// real Slack request came back 401 — indistinguishable from a wrong secret, a
+// rotated secret, or a forgery.
+func TestAnUnresolvedReferenceIsNotASignatureFailure(t *testing.T) {
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	body := []byte("payload=%7B%7D")
+
+	for _, ref := range []string{
+		"ssm:/releasebot/prod/secrets/slack-signing-secret",
+		"secretsmanager:releasebot/prod/slack",
+	} {
+		// Sign with the reference itself — the worst case, because the
+		// signature is then internally CONSISTENT and would verify.
+		sig := Sign(ref, ts, body)
+		err := Verify(ref, sig, ts, body, time.Now())
+		if err != ErrUnresolvedReference {
+			t.Fatalf("a %q secret must be a named configuration error, got %v", ref, err)
+		}
+	}
+
+	// ⚠️ And a real secret must be unaffected — this guard must not become a
+	// reason a working deployment stops verifying.
+	real := "abcdef0123456789abcdef0123456789"
+	if err := Verify(real, Sign(real, ts, body), ts, body, time.Now()); err != nil {
+		t.Fatalf("a genuine secret must still verify: %v", err)
 	}
 }

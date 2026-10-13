@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -39,6 +40,10 @@ var (
 	ErrMissing   = errors.New("slackverify: signature or timestamp header missing")
 	ErrStale     = errors.New("slackverify: timestamp outside replay window")
 	ErrSignature = errors.New("slackverify: signature mismatch")
+	// ⚠️ A CONFIGURATION error, deliberately distinct from ErrSignature. The
+	// two are indistinguishable from the outside -- both end in a 401 -- and
+	// that is precisely why they must be distinguishable in the LOG.
+	ErrUnresolvedReference = errors.New("slackverify: the signing secret is still an unresolved reference — the resolver did not run, so this build cannot verify anything")
 )
 
 // Verify checks a Slack request. body must be the raw, undecoded request body.
@@ -57,6 +62,25 @@ func Verify(secret, signature, timestamp string, body []byte, now time.Time) err
 	// checking the past lets a future-dated capture replay indefinitely.
 	if d := now.Sub(time.Unix(ts, 0)); d > ReplayWindow || d < -ReplayWindow {
 		return ErrStale
+	}
+
+	// ⛔ A SECRET THAT IS STILL A REFERENCE MEANS THE RESOLVER NEVER RAN.
+	//
+	// This exact failure cost an hour: a function was deployed with an OLD
+	// binary that predated internal/secretref, while its environment had
+	// already been switched to `ssm:/releasebot/prod/secrets/...`. The old code
+	// read that PATH as the signing secret and HMAC'd 57 characters of
+	// parameter path against every request. Every real Slack click returned
+	// 401 "unauthorized", which is indistinguishable from a wrong secret, a
+	// rotated secret, or a forged request.
+	//
+	// ⚠️ A value of this shape can NEVER be a valid signing secret, so saying
+	// so costs nothing and converts a silent authentication failure into a
+	// named configuration error. Checked here rather than at INIT on purpose:
+	// this is the function that cares, and a future caller that forgets to
+	// resolve is caught wherever it forgot.
+	if strings.HasPrefix(secret, "ssm:") || strings.HasPrefix(secret, "secretsmanager:") {
+		return ErrUnresolvedReference
 	}
 
 	mac := hmac.New(sha256.New, []byte(secret))

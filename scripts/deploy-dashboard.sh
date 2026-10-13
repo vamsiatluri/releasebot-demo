@@ -42,7 +42,10 @@ WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
   go build -trimpath -ldflags="-s -w" -o "$WORK/bootstrap" ./cmd/dashboardapi
 ( cd "$WORK" && zip -q dashboardapi.zip bootstrap )
-unzip -l "$WORK/dashboardapi.zip" | grep -qE ' bootstrap$' \
+# ⚠️ Listed to a FILE first: `unzip -l | grep -q` under pipefail fails when it
+# MATCHES (grep exits first, unzip gets SIGPIPE).
+unzip -l "$WORK/dashboardapi.zip" > "$WORK/zip.listing"
+grep -qE ' bootstrap$' "$WORK/zip.listing" \
   || { echo "✗ bootstrap is not at the root of the zip" >&2; exit 1; }
 
 # ⚠️ The S3 KEY CARRIES THE ARTIFACT'S HASH, and that is not cosmetic.
