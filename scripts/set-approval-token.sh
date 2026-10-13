@@ -73,15 +73,57 @@ code=$(curl -sS -o /dev/null -w '%{http_code}' \
 [ "$code" = "200" ] || { echo "✗ token cannot read the repo (HTTP $code)" >&2; exit 4; }
 echo "✓ token reads the repo"
 
-PARAMS="$(mktemp)"; trap 'rm -f "$PARAMS"' EXIT
-chmod 600 "$PARAMS"
-export PARAMS TOKEN
-python3 "$HERE/_approval-params.py"
+# ── Verify the token can do the ONE THING it exists for ─────────────────────
+#
+# ⛔ Reading the repo is NOT evidence it can approve. A fine-grained token reads
+# a public repo with no permissions at all, and the approve endpoint refuses
+# fine-grained tokens entirely — so "it reads the repo" is exactly the check
+# that lets the wrong credential through. The classic/fine-grained prefix test
+# above is the real guard; this is a second, narrower one.
+#
+# ⚠️ An empty x-oauth-scopes header means the token is NOT classic, whatever its
+# prefix claims. Classic tokens always report their scopes.
+SCOPES=$(curl -sS -D - -o /dev/null -H "Authorization: Bearer $TOKEN" \
+           https://api.github.com/user 2>/dev/null \
+         | grep -i '^x-oauth-scopes:' | cut -d: -f2- | tr -d '\r' | sed 's/^ *//')
+if [ -z "$SCOPES" ]; then
+  echo "✗ GitHub reports NO scopes for this token." >&2
+  echo "  Classic tokens always report their scopes; an empty header means this" >&2
+  echo "  is not one, and the approve endpoint will return 403 at the click." >&2
+  exit 5
+fi
+case "$SCOPES" in
+  *repo*) echo "✓ classic token, scopes: $SCOPES" ;;
+  *) echo "✗ token lacks the 'repo' scope (has: $SCOPES)." >&2
+     echo "  A public repo still needs 'repo', not 'public_repo'." >&2
+     exit 6 ;;
+esac
+
+# ── Write it where the function actually reads from ─────────────────────────
+#
+# ⛔ THIS USED TO UPDATE A CLOUDFORMATION PARAMETER, AND THAT IS NOW INERT.
+# The function resolves its secrets from SSM at INIT (internal/secretref), so
+# the template's GitHubApprovalToken parameter is no longer read when
+# UseSecretRefs is on. Updating it would report success and change nothing --
+# the exact failure this whole project keeps finding, committed by the script
+# whose only job is to set this value.
+#
+# Which parameter to write is read FROM THE STACK rather than hardcoded, so the
+# two can never drift apart.
+NAME=$(aws cloudformation describe-stacks --stack-name "$STACK" --region "$REGION" \
+         --query "Stacks[0].Parameters[?ParameterKey=='GitHubApprovalTokenParam'].ParameterValue | [0]" \
+         --output text 2>/dev/null)
+if [ -z "$NAME" ] || [ "$NAME" = "None" ]; then
+  echo "✗ $STACK has no GitHubApprovalTokenParam — this stack predates the" >&2
+  echo "  secret-reference change. Deploy infra/50-slack-approve.yaml first." >&2
+  exit 7
+fi
+echo "  destination: $NAME"
+
+# rotate-secret.sh writes the SecureString, verifies the type and the round
+# trip, AND recycles the function -- which is required, because the value is
+# read once at INIT and a warm environment keeps serving the old one.
+RELEASEBOT_SECRET="$TOKEN" bash "$HERE/rotate-secret.sh" "$NAME" || exit 1
 unset TOKEN
 
-aws cloudformation update-stack --stack-name "$STACK" --region "$REGION" \
-  --use-previous-template --capabilities CAPABILITY_IAM \
-  --parameters "file://$PARAMS" >/dev/null
-echo "... updating $STACK"
-aws cloudformation wait stack-update-complete --stack-name "$STACK" --region "$REGION"
-echo "✓ endpoint now holds the new token — click Approve in Slack"
+echo "✓ the approval endpoint now resolves the new token — click Approve in Slack"
