@@ -28,10 +28,63 @@ on:
     # same code is how a gate stops being read and starts being clicked
     # through -- and an approval gate that gets rubber-stamped is worse than
     # no gate, because it still looks like a control.
+    #
+    # ⚠️ AND NOT ONLY DOCS. A commit touching `scripts/sandbox-down.sh` and
+    # `web/index.html` -- a local teardown tool and the dashboard page, neither
+    # of which changes any of the four Lambda binaries -- cut a release
+    # candidate and CANCELLED a production approval a person was in the middle
+    # of giving (cancel-in-progress, working as designed). The trigger has to
+    # match "something that changes what we deploy", and it did not.
+    #
+    # ⛔ WHY A DENYLIST AND NOT AN ALLOWLIST, which would be tidier.
+    # Both can go stale, and the two failures are not equally bad:
+    #   - a stale DENYLIST over-triggers -> a spurious release candidate. Loud,
+    #     visible, recoverable.
+    #   - a stale ALLOWLIST under-triggers -> a real code change SILENTLY does
+    #     not deploy. You believe you shipped and you did not.
+    # Silent non-deployment is the worse failure and the one this whole project
+    # keeps finding, so the list fails toward running too often.
+    #
+    # ⚠️ Operator scripts are listed by NAME, not as `scripts/**`. The workflow
+    # itself runs scripts/ci-*.sh and scripts/harness.sh, so ignoring the whole
+    # directory would stop a change to the deploy logic from being deployed --
+    # swapping this bug for the silent one.
     paths-ignore:
       - 'docs/**'
       - '**.md'
       - 'LICENSE'
+      # The dashboard ships by scripts/deploy-dashboard.sh, not by this pipeline.
+      - 'web/**'
+      # Operator tooling: run by a human, never by the release.
+      - 'scripts/assess.sh'
+      - 'scripts/bootstrap.sh'
+      - 'scripts/preflight.sh'
+      - 'scripts/demo.sh'
+      - 'scripts/deploy-dashboard.sh'
+      - 'scripts/deploy-slack-approve.sh'
+      - 'scripts/jira-webhook.sh'
+      - 'scripts/lint-shell.py'
+      - 'scripts/loop-demo.sh'
+      - 'scripts/loop-iterations.sh'
+      - 'scripts/network-down.sh'
+      - 'scripts/probe-egress.sh'
+      - 'scripts/prove-slash.sh'
+      - 'scripts/rollback.sh'
+      - 'scripts/rotate-secret.sh'
+      - 'scripts/sandbox-down.sh'
+      - 'scripts/sandbox-up.sh'
+      - 'scripts/set-approval-token.sh'
+      - 'scripts/set-secret.sh'
+      - 'scripts/set-write-token.sh'
+      - 'scripts/slash.sh'
+      - 'scripts/_empty-bucket.py'
+      - 'scripts/_approval-params.py'
+      # ⚠️ scripts/_update-stack.py is DELIBERATELY ABSENT. CI does not call it
+      # today -- ci-deploy.sh drives the AWS CLI directly -- so by the letter of
+      # the rule it belongs here. It is left out because it is deploy logic, and
+      # the principle above says fail toward running too often. If that ever
+      # becomes noisy, add it; do not add anything whose change could alter what
+      # gets deployed.
   workflow_dispatch:
 
 # ⚠️ A run held at the approval gate SURVIVES the next push, and then sits there
