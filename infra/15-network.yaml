@@ -16,6 +16,39 @@ Description: >
   the resource policy and WAF in 30-apigw.yaml govern who can reach the API.
 
 Parameters:
+  # ── MODE ────────────────────────────────────────────────────────────────────
+  # Give ExistingVpcId + ExistingPrivateSubnetIds to deploy INTO a VPC that is
+  # already there -- which is what a real engagement looks like, because the
+  # networking team owns the VPC and will not hand over a greenfield one.
+  #
+  # In that mode this stack creates NOTHING that belongs to them: no VPC, no
+  # subnets, no internet gateway, no NAT, no route tables. It creates only the
+  # two security groups and the VPC endpoints the functions need, and it is
+  # safe to delete without touching their network.
+  #
+  # ⚠️ Their subnets must already have a route to the internet (NAT or an
+  # egress proxy) for api.github.com and slack.com. scripts/preflight.sh checks
+  # that by actually making the call from inside the subnet rather than reading
+  # a route table, because a route table that looks right and a packet that
+  # arrives are different facts.
+  ExistingVpcId:
+    Type: String
+    Default: ''
+    Description: Deploy into this VPC instead of creating one. Empty = create our own.
+  ExistingPrivateSubnetIds:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: Their private subnets, two or more, in different AZs.
+  CreateEndpoints:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: >
+      Create interface endpoints for SSM and Lambda and gateway endpoints for
+      DynamoDB and S3. Set false if the account ALREADY has them -- a duplicate
+      interface endpoint for the same service in the same VPC is rejected, and
+      the error names the service but not the existing endpoint.
+
   VpcCidr:        {Type: String, Default: '10.80.0.0/16'}
   PublicSubnetCidr:  {Type: String, Default: '10.80.0.0/24'}
   PrivateSubnetACidr: {Type: String, Default: '10.80.1.0/24'}
@@ -35,12 +68,27 @@ Parameters:
       on calls that leave AWS. In dry run that is nothing at all.
 
 Conditions:
-  WithNat: !Equals [!Ref CreateNatGateway, 'true']
+  # Create our own VPC only when we were not given one.
+  CreateVpc:  !Equals [!Join ['', [!Ref ExistingVpcId]], '']
+  UseExisting: !Not [!Equals [!Join ['', [!Ref ExistingVpcId]], '']]
+  # A NAT is ours to create only if the VPC is ours. In their VPC, egress is
+  # their arrangement and creating a second NAT would be both expensive and
+  # presumptuous.
+  WithNat: !And
+    - !Equals [!Ref CreateNatGateway, 'true']
+    - !Condition CreateVpc
+  WithEndpoints: !Equals [!Ref CreateEndpoints, 'true']
+  # ⚠️ A GATEWAY endpoint is a route-table entry, not an ENI, so it can only be
+  # created when we own the route table. In an existing VPC their DynamoDB and
+  # S3 routing is already whatever it is, and adding entries to someone else's
+  # route table from our stack would be a change we cannot safely reverse.
+  GatewayEndpoints: !And [!Condition WithEndpoints, !Condition CreateVpc]
 
 Resources:
 
   Vpc:
     Type: AWS::EC2::VPC
+    Condition: CreateVpc
     Properties:
       CidrBlock: !Ref VpcCidr
       # ⚠️ BOTH are required for interface endpoints. Without DNS hostnames,
@@ -57,6 +105,7 @@ Resources:
   # that AZ has a problem. It costs nothing to span two.
   PrivateSubnetA:
     Type: AWS::EC2::Subnet
+    Condition: CreateVpc
     Properties:
       VpcId: !Ref Vpc
       CidrBlock: !Ref PrivateSubnetACidr
@@ -66,6 +115,7 @@ Resources:
 
   PrivateSubnetB:
     Type: AWS::EC2::Subnet
+    Condition: CreateVpc
     Properties:
       VpcId: !Ref Vpc
       CidrBlock: !Ref PrivateSubnetBCidr
@@ -136,6 +186,7 @@ Resources:
 
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
+    Condition: CreateVpc
     Properties: {VpcId: !Ref Vpc, Tags: [{Key: Name, Value: releasebot-private}]}
 
   PrivateDefaultRoute:
@@ -148,10 +199,12 @@ Resources:
 
   PrivateSubnetAAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateVpc
     Properties: {SubnetId: !Ref PrivateSubnetA, RouteTableId: !Ref PrivateRouteTable}
 
   PrivateSubnetBAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateVpc
     Properties: {SubnetId: !Ref PrivateSubnetB, RouteTableId: !Ref PrivateRouteTable}
 
   # ── Security groups ─────────────────────────────────────────────────────────
@@ -163,7 +216,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: ReleaseBot functions - egress only
-      VpcId: !Ref Vpc
+      VpcId: !If [CreateVpc, !Ref Vpc, !Ref ExistingVpcId]
       SecurityGroupEgress:
         - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: '0.0.0.0/0',
            Description: 'HTTPS to AWS endpoints, GitHub and Slack'}
@@ -173,7 +226,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: VPC interface endpoints - 443 from the functions only
-      VpcId: !Ref Vpc
+      VpcId: !If [CreateVpc, !Ref Vpc, !Ref ExistingVpcId]
       SecurityGroupIngress:
         # Sourced from the Lambda SG, not from a CIDR. A CIDR would admit
         # anything that later lands in these subnets; this admits the functions.
@@ -188,45 +241,56 @@ Resources:
   # they ask whether the traffic is private.
   SsmEndpoint:
     Type: AWS::EC2::VPCEndpoint
+    Condition: WithEndpoints
     Properties:
-      VpcId: !Ref Vpc
+      VpcId: !If [CreateVpc, !Ref Vpc, !Ref ExistingVpcId]
       ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssm'
       VpcEndpointType: Interface
       PrivateDnsEnabled: true
-      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      SubnetIds: !If [CreateVpc, [!Ref PrivateSubnetA, !Ref PrivateSubnetB], !Ref ExistingPrivateSubnetIds]
       SecurityGroupIds: [!Ref EndpointSecurityGroup]
 
   LambdaEndpoint:
     Type: AWS::EC2::VPCEndpoint
+    Condition: WithEndpoints
     Properties:
-      VpcId: !Ref Vpc
+      VpcId: !If [CreateVpc, !Ref Vpc, !Ref ExistingVpcId]
       ServiceName: !Sub 'com.amazonaws.${AWS::Region}.lambda'
       VpcEndpointType: Interface
       PrivateDnsEnabled: true
-      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      SubnetIds: !If [CreateVpc, [!Ref PrivateSubnetA, !Ref PrivateSubnetB], !Ref ExistingPrivateSubnetIds]
       SecurityGroupIds: [!Ref EndpointSecurityGroup]
 
   # Gateway endpoints are FREE and are a route-table entry rather than an ENI.
   # There is no reason not to have them.
   DynamoDbEndpoint:
     Type: AWS::EC2::VPCEndpoint
+    Condition: GatewayEndpoints
     Properties:
-      VpcId: !Ref Vpc
+      VpcId: !If [CreateVpc, !Ref Vpc, !Ref ExistingVpcId]
       ServiceName: !Sub 'com.amazonaws.${AWS::Region}.dynamodb'
       VpcEndpointType: Gateway
-      RouteTableIds: [!Ref PrivateRouteTable]
+      RouteTableIds: !If [CreateVpc, [!Ref PrivateRouteTable], !Ref 'AWS::NoValue']
 
   S3Endpoint:
     Type: AWS::EC2::VPCEndpoint
+    Condition: GatewayEndpoints
     Properties:
-      VpcId: !Ref Vpc
+      VpcId: !If [CreateVpc, !Ref Vpc, !Ref ExistingVpcId]
       ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
       VpcEndpointType: Gateway
-      RouteTableIds: [!Ref PrivateRouteTable]
+      RouteTableIds: !If [CreateVpc, [!Ref PrivateRouteTable], !Ref 'AWS::NoValue']
 
 Outputs:
-  VpcId:              {Value: !Ref Vpc}
-  PrivateSubnetIds:   {Value: !Sub '${PrivateSubnetA},${PrivateSubnetB}'}
+  VpcId:
+    Value: !If [CreateVpc, !Ref Vpc, !Ref ExistingVpcId]
+  PrivateSubnetIds:
+    Value: !If
+      - CreateVpc
+      - !Sub '${PrivateSubnetA},${PrivateSubnetB}'
+      - !Join [',', !Ref ExistingPrivateSubnetIds]
+  Mode:
+    Value: !If [CreateVpc, 'created our own VPC', 'deployed into an existing VPC']
   LambdaSecurityGroup: {Value: !Ref LambdaSecurityGroup}
   NatGatewayId:
     Condition: WithNat
