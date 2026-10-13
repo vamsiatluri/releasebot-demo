@@ -1,0 +1,58 @@
+  [BLOCKER] apigateway/releasebot
+  [WARN   ] lambda/slackApprove
+  [WARN   ] lambda/releasebot-dashboard-api
+  [WARN   ] logs//aws/apigateway/welcome
+  [WARN   ] logs//aws/lambda/releasebot-egress-probe-45214
+  [WARN   ] logs//aws/lambda/releasebot-ghprobe
+  [WARN   ] logs//aws/lambda/releasebot-goprobe
+  [WARN   ] logs//aws/lambda/releasebot-netprobe
+  [WARN   ] logs/API-Gateway-Execution-Logs_0aohv0kx5k/prod
+  [WARN   ] logs/API-Gateway-Execution-Logs_0aohv0kx5k/test
+  [WARN   ] apigateway/releasebot/test
+  [WARN   ] alarm/releasebot-async-job-dropped
+  [INFO   ] lambda/slackApprove
+  [INFO   ] lambda/slackApprove
+  [INFO   ] lambda/cutRelease
+  [INFO   ] lambda/cutRelease
+  [INFO   ] lambda/releaseAutomationMergebackTest
+  [INFO   ] lambda/releaseAutomationMergebackTest
+  [INFO   ] lambda/releasebot-dashboard-api
+  [INFO   ] lambda/releasebot-dashboard-api
+  [INFO   ] lambda/releaseAutomationMergeback
+  [INFO   ] lambda/releaseAutomationMergeback
+  [INFO   ] lambda/cutReleaseTest
+  [INFO   ] lambda/cutReleaseTest
+  [INFO   ] iam/releasebot-slack-approve-ExecutionRole-3j42Cx6xDYj3
+  [INFO   ] iam/releasebot-exec-cutrelease
+  [INFO   ] iam/releasebot-exec-mergeback-test
+  [INFO   ] iam/releasebot-dashboard-ApiRole-ttjoWT4DNnuB
+  [INFO   ] iam/releasebot-exec-mergeback
+  [INFO   ] iam/releasebot-exec-cutrelease-test
+  [BLOCKER] lambda/cutRelease  —  runtime
+  [BLOCKER] lambda/cutRelease  —  code sha256
+  [BLOCKER] lambda/cutReleaseTest  —  runtime
+  [BLOCKER] lambda/cutReleaseTest  —  code sha256
+  [BLOCKER] lambda/releaseAutomationMergeback  —  runtime
+  [BLOCKER] lambda/releaseAutomationMergeback  —  code sha256
+  [BLOCKER] lambda/releaseAutomationMergebackTest  —  runtime
+  [BLOCKER] lambda/releaseAutomationMergebackTest  —  code sha256
+  [BLOCKER] lambda/releasebot-dashboard-api  —  code sha256
+  [BLOCKER] lambda/slackApprove  —  environment variable names
+  [WARN   ] lambda/cutRelease  —  reserved concurrency
+  [WARN   ] lambda/cutReleaseTest  —  reserved concurrency
+  [WARN   ] lambda/releaseAutomationMergeback  —  reserved concurrency
+  [WARN   ] lambda/releaseAutomationMergebackTest  —  reserved concurrency
+  [WARN   ] lambda/slackApprove  —  reserved concurrency
+  [WARN   ] logs//aws/lambda/cutRelease  —  retention days
+  [WARN   ] logs//aws/lambda/cutReleaseTest  —  retention days
+  [WARN   ] logs//aws/lambda/releaseAutomationMergeback  —  retention days
+  [WARN   ] logs//aws/lambda/releaseAutomationMergebackTest  —  retention days
+  [INFO   ] logs//aws/lambda/releasebot-egress-probe-45214  —  exists
+  [INFO   ] logs//aws/lambda/releasebot-ghprobe  —  exists
+  [INFO   ] logs//aws/lambda/releasebot-goprobe  —  exists
+  [INFO   ] logs//aws/lambda/releasebot-netprobe  —  exists
+  [INFO   ] logs/API-Gateway-Execution-Logs_0aohv0kx5k/prod  —  exists
+  [INFO   ] logs/API-Gateway-Execution-Logs_0aohv0kx5k/test  —  exists
+  [INFO   ] logs/API-Gateway-Execution-Logs_1xjw2mwgl7/prod  —  exists
+  [INFO   ] logs/API-Gateway-Execution-Logs_1xjw2mwgl7/test  —  exists
+  27 differences, 10 of them blockers.

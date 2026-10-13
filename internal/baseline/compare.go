@@ -180,9 +180,66 @@ func indexFunctions(b *Baseline) map[string]Function {
 func indexRoles(b *Baseline) map[string]Role {
 	m := map[string]Role{}
 	for _, r := range b.Roles {
-		m[r.Name] = r
+		m[logicalName(r.Name, r.StackOwned)] = r
 	}
 	return m
+}
+
+// logicalName strips the random suffix CloudFormation appends to a physical
+// name it generated, so the SAME resource in two accounts compares equal.
+//
+// ⛔ WHY. A parity run between two accounts reported TWELVE of thirty-one
+// differences as role existence:
+//
+//	iam/releasebot-dashboard-ApiRole-X1Lyy4HP4DBG   A: absent   B: present
+//	iam/releasebot-dashboard-ApiRole-ttjoWT4DNnuB   A: present  B: absent
+//
+// Both are the same role from the same template. CloudFormation generates
+// `<stack>-<LogicalId>-<RANDOM>` whenever a template does not name a resource,
+// and that suffix can NEVER match across accounts -- so every such resource
+// yields two spurious blockers, forever, and no amount of closing differences
+// will ever bring the count to zero.
+//
+// ★ That matters more than it looks: the whole point of the parity run is to
+// drive differences to zero and then trust the number. A comparator with a
+// permanent floor of noise teaches people to ignore the output, and 39% of
+// this run was noise.
+//
+// ⚠️ Only for STACK-OWNED resources. A hand-made role that happens to end in
+// something suffix-shaped is a real name, and silently truncating it would make
+// two genuinely different roles compare equal -- a false MATCH, which is the
+// expensive direction.
+func logicalName(name string, stackOwned bool) string {
+	if !stackOwned {
+		return name
+	}
+	i := strings.LastIndex(name, "-")
+	if i < 1 {
+		return name
+	}
+	suffix := name[i+1:]
+	// CloudFormation's generated suffix is 12-13 mixed-case alphanumerics with
+	// no separators. Requiring BOTH cases present keeps real words
+	// ("-execution", "-RELEASE") from being eaten.
+	if len(suffix) < 10 || len(suffix) > 16 {
+		return name
+	}
+	var upper, lower, other bool
+	for _, c := range suffix {
+		switch {
+		case c >= 'A' && c <= 'Z':
+			upper = true
+		case c >= 'a' && c <= 'z':
+			lower = true
+		case c >= '0' && c <= '9':
+		default:
+			other = true
+		}
+	}
+	if other || !upper || !lower {
+		return name
+	}
+	return name[:i]
 }
 func indexAPIs(b *Baseline) map[string]API {
 	m := map[string]API{}
