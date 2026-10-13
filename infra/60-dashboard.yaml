@@ -9,6 +9,12 @@ Description: >
   circular dependency people usually resolve by allowing "*".
 
 Parameters:
+  # ⚠️ Attached to the SAME VPC as the production release functions. This
+  # function is part of production even though it lives in a different stack,
+  # and "everything is in the VPC" was not true while it sat outside -- a
+  # boundary with a hole in it is not a boundary, it is a diagram.
+  VpcSubnetIds:        {Type: CommaDelimitedList, Default: ''}
+  VpcSecurityGroupIds: {Type: CommaDelimitedList, Default: ''}
   ArtifactBucket:   {Type: String}
   ArtifactKey:      {Type: String, Default: 'releasebot/dashboardapi.zip'}
   AdminEmail:
@@ -32,6 +38,9 @@ Parameters:
   LogRetentionDays:
     Type: Number
     Default: 7
+
+Conditions:
+  InVpc: !Not [!Equals [!Join ['', !Ref VpcSubnetIds], '']]
 
 Resources:
 
@@ -93,7 +102,12 @@ Resources:
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement: [{Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}]
-      ManagedPolicyArns: ['arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole']
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        # Required before a function can be VPC-attached: Lambda creates the ENI
+        # AS THIS ROLE, and without it UpdateFunctionConfiguration is rejected
+        # with an error naming CreateNetworkInterface but not the policy.
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
       Policies:
         - PolicyName: read-release-functions
           PolicyDocument:
@@ -156,6 +170,11 @@ Resources:
       Timeout: 15
       Role: !GetAtt ApiRole.Arn
       Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref ArtifactKey}
+      VpcConfig: !If
+        - InVpc
+        - SubnetIds: !Ref VpcSubnetIds
+          SecurityGroupIds: !Ref VpcSecurityGroupIds
+        - !Ref 'AWS::NoValue'
       Environment:
         Variables:
           RELEASEBOT_ACCOUNT: !Ref AWS::AccountId
