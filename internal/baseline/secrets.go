@@ -27,9 +27,14 @@ var nonSecretExact = map[string]bool{
 	"AWS_LAMBDA_FUNCTION_NAME": true,
 	"SECRETS_PREFIX":           true, // a prefix is a pointer, not a value
 	"SECRET_ARN":               true, // likewise: an ARN names a secret
-	"KEY_PREFIX":               true,
-	"AUTH_MODE":                true,
-	"SIGNING_ALGORITHM":        true,
+	// ⚠️ A rotation marker: a timestamp recorded so a config-only republish
+	// forces a cold start. Named SECRET_GENERATION originally, which the
+	// classifier read as a credential and reported as plaintext -- the tool
+	// flagging the hardening's own bookkeeping as the thing it was fixing.
+	"CONFIG_GENERATION": true,
+	"KEY_PREFIX":        true,
+	"AUTH_MODE":         true,
+	"SIGNING_ALGORITHM": true,
 }
 
 // IsSecretish reports whether a variable's VALUE should be withheld.
@@ -54,17 +59,51 @@ func IsSecretish(key string) bool {
 // SplitEnv separates an environment map into the keys whose values are safe to
 // record and the keys whose values are not. Values for the second group are
 // never returned, only the names.
-func SplitEnv(env map[string]string) (keys []string, safe map[string]string, secretLooking []string) {
+// SplitEnv classifies a function's environment.
+//
+// secretLooking = a secret-looking NAME holding a LITERAL. That is the finding.
+// byReference   = a secret-looking NAME holding a POINTER. That is the FIX, and
+//
+//	reporting it as the finding is how a tool tells you to undo
+//	work you have already done.
+func SplitEnv(env map[string]string) (keys []string, safe map[string]string, secretLooking, byReference []string) {
 	safe = map[string]string{}
 	for k, v := range env {
 		keys = append(keys, k)
 		if IsSecretish(k) {
-			secretLooking = append(secretLooking, k)
+			if IsSecretReference(v) {
+				byReference = append(byReference, k)
+			} else if strings.TrimSpace(v) != "" {
+				secretLooking = append(secretLooking, k)
+			}
+			// An EMPTY secret-looking variable is neither. Reporting it as a
+			// plaintext secret is a false positive people learn to ignore,
+			// which costs more than the one real finding it hides.
 			continue
 		}
 		safe[k] = v
 	}
 	sortStrings(keys)
 	sortStrings(secretLooking)
-	return keys, safe, secretLooking
+	sortStrings(byReference)
+	return keys, safe, secretLooking, byReference
+}
+
+// IsSecretReference reports whether a value is a POINTER to a secret rather
+// than the secret.
+//
+// ⛔ WHY THIS EXISTS. The capture deliberately records variable NAMES and not
+// values, so the review could only judge by name -- and after the secrets were
+// moved to SecureString references, it still reported every function as
+// "holds secret values in environment variables". The tool described the fix
+// as the defect.
+//
+// ⚠️ This reads the value's SHAPE and nothing else. A prefix is not a secret;
+// the bytes after it are never stored, printed or returned.
+func IsSecretReference(value string) bool {
+	v := strings.TrimSpace(strings.ToLower(value))
+	return strings.HasPrefix(v, "ssm:") ||
+		strings.HasPrefix(v, "secretsmanager:") ||
+		strings.HasPrefix(v, "arn:aws:secretsmanager:") ||
+		strings.HasPrefix(v, "arn:aws:ssm:")
 }

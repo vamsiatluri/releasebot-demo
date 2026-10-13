@@ -54,6 +54,22 @@ type Baseline struct {
 	LogGroups  []LogGroup `json:"log_groups"`
 	Alarms     []Alarm    `json:"alarms"`
 	Notes      []string   `json:"notes"`
+
+	// ⛔ WHAT THE NAME FILTER THREW AWAY, per resource class.
+	//
+	// `--prefix releasebot` is the obvious thing to type for a project called
+	// ReleaseBot, and it silently excluded FIVE of six functions, because they
+	// are named cutRelease, cutReleaseTest, releaseAutomationMergeback,
+	// releaseAutomationMergebackTest and slackApprove. The report then read
+	// "1 functions, 1 roles, 1 APIs · 2 blockers, 7 warnings" -- a confident,
+	// complete-looking assessment of one sixth of the system.
+	//
+	// A capture that narrows its own scope and does not say so is the same
+	// failure as a teardown that reports an empty account: the output looks
+	// identical whether the account holds one function or six. Recorded so the
+	// review can say it out loud.
+	Prefix      string         `json:"prefix,omitempty"`
+	FilteredOut map[string]int `json:"filtered_out,omitempty"`
 }
 
 type Function struct {
@@ -74,12 +90,16 @@ type Function struct {
 	// EnvNonSecret holds values for keys judged non-sensitive, because an
 	// environment name or a URL is part of the baseline you actually want to
 	// diff. The classifier is in secrets.go and errs towards redaction.
-	EnvNonSecret  map[string]string `json:"env_non_secret"`
-	SecretLooking []string          `json:"secret_looking_keys"`
-	Aliases       []Alias           `json:"aliases"`
-	Versions      []string          `json:"versions"`
-	Tags          map[string]string `json:"tags"`
-	DLQ           string            `json:"dlq_arn,omitempty"`
+	EnvNonSecret map[string]string `json:"env_non_secret"`
+	// A secret-looking name holding a LITERAL value — the finding.
+	SecretLooking []string `json:"secret_looking_keys"`
+	// A secret-looking name holding an ssm:/secretsmanager: POINTER — the fix.
+	// Recorded as a shape, never as a value.
+	SecretByReference []string          `json:"secret_by_reference_keys,omitempty"`
+	Aliases           []Alias           `json:"aliases"`
+	Versions          []string          `json:"versions"`
+	Tags              map[string]string `json:"tags"`
+	DLQ               string            `json:"dlq_arn,omitempty"`
 	// StackOwned is false when no CloudFormation stack claims this function --
 	// i.e. somebody created it by hand. That is the single most useful field in
 	// the whole capture.

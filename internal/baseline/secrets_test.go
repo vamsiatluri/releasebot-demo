@@ -1,6 +1,9 @@
 package baseline
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestIsSecretish(t *testing.T) {
 	secret := []string{
@@ -33,7 +36,7 @@ func TestSplitEnvNeverReturnsASecretValue(t *testing.T) {
 		"GITHUB_TOKEN":   "ghp_thisMustNeverAppearInOutput",
 		"SECRETS_PREFIX": "releasebot/prod",
 	}
-	keys, safe, secretLooking := SplitEnv(env)
+	keys, safe, secretLooking, _ := SplitEnv(env)
 	if len(keys) != 3 {
 		t.Fatalf("expected all 3 key names, got %v", keys)
 	}
@@ -50,5 +53,42 @@ func TestSplitEnvNeverReturnsASecretValue(t *testing.T) {
 	}
 	if len(secretLooking) != 1 || secretLooking[0] != "GITHUB_TOKEN" {
 		t.Fatalf("expected GITHUB_TOKEN flagged, got %v", secretLooking)
+	}
+}
+
+// ⛔ THE TOOL MUST NOT REPORT THE FIX AS THE DEFECT.
+//
+// After the secrets moved to SecureString references the review still said
+// "holds secret values in environment variables" about every function, because
+// it judged by NAME alone. A tool that reads identically before and after the
+// work cannot show that a control is in place — and worse, it tells the next
+// person to undo it.
+func TestAReferenceIsNotAPlaintextSecret(t *testing.T) {
+	env := map[string]string{
+		"GITHUB_TOKEN":         "ssm:/releasebot/prod/secrets/github-token",
+		"SLACK_SIGNING_SECRET": "secretsmanager:releasebot/prod/slack",
+		"JIRA_TOKEN":           "ghp_an_actual_literal_value",
+		"SLACK_TOKEN":          "", // set but empty: neither finding nor fix
+		"CONFIG_GENERATION":    "20261013T221500Z",
+	}
+	_, safe, literal, byRef := SplitEnv(env)
+
+	if len(literal) != 1 || literal[0] != "JIRA_TOKEN" {
+		t.Fatalf("only the literal should be a finding, got %v", literal)
+	}
+	if len(byRef) != 2 {
+		t.Fatalf("both references should be recorded as references, got %v", byRef)
+	}
+	// ⚠️ A reference's value must STILL not be recorded. It is a pointer, but
+	// the rule is "never store a secret-looking variable's value", and a
+	// parameter PATH in a captured JSON file is a map of where the secrets are.
+	for k, v := range safe {
+		if strings.Contains(v, "releasebot/prod/secrets") {
+			t.Fatalf("a secret's PATH was recorded under %q", k)
+		}
+	}
+	// The rotation marker must not read as a credential.
+	if _, bad := safe["CONFIG_GENERATION"]; !bad {
+		t.Fatal("CONFIG_GENERATION is a timestamp and should be captured as ordinary config")
 	}
 }

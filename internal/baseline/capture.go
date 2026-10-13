@@ -26,6 +26,20 @@ type Capturer struct {
 	Region  string
 	Prefix  string // only resources whose name contains this are captured
 	Verbose bool
+
+	// Counts what match() rejected, per class, so the filter's effect is
+	// reportable instead of invisible. See Baseline.FilteredOut.
+	skipped map[string]int
+}
+
+// skip records a rejection. Keyed by class rather than by name: the names
+// themselves can be sensitive in someone else's account, and the COUNT is what
+// makes "this filter hid most of the system" sayable.
+func (c *Capturer) skip(class string) {
+	if c.skipped == nil {
+		c.skipped = map[string]int{}
+	}
+	c.skipped[class]++
 }
 
 func (c *Capturer) aws(out any, args ...string) error {
@@ -59,8 +73,19 @@ func (c *Capturer) match(name string) bool {
 	return c.Prefix == "" || strings.Contains(strings.ToLower(name), strings.ToLower(c.Prefix))
 }
 
+// matchOrSkip is match() that also counts. Every call site that filters must
+// use this one, or the filter's effect goes unrecorded for that class.
+func (c *Capturer) matchOrSkip(class, name string) bool {
+	if c.match(name) {
+		return true
+	}
+	c.skip(class)
+	return false
+}
+
 func (c *Capturer) Capture(label string) (*Baseline, error) {
-	b := &Baseline{CapturedAt: time.Now().UTC(), Label: label, Region: c.Region}
+	c.skipped = map[string]int{}
+	b := &Baseline{CapturedAt: time.Now().UTC(), Label: label, Region: c.Region, Prefix: c.Prefix}
 
 	var who struct{ Account string }
 	if err := c.aws(&who, "sts", "get-caller-identity"); err != nil {
@@ -92,6 +117,9 @@ func (c *Capturer) Capture(label string) (*Baseline, error) {
 	}
 	if err := c.captureAlarms(b, owners); err != nil {
 		b.Notes = append(b.Notes, "alarms: "+err.Error())
+	}
+	if len(c.skipped) > 0 {
+		b.FilteredOut = c.skipped
 	}
 	return b, nil
 }
@@ -139,16 +167,17 @@ func (c *Capturer) captureFunctions(b *Baseline, owners map[string]string) error
 	}
 
 	for _, f := range list.Functions {
-		if !c.match(f.FunctionName) {
+		if !c.matchOrSkip("functions", f.FunctionName) {
 			continue
 		}
-		keys, safe, secretLooking := SplitEnv(f.Environment.Variables)
+		keys, safe, secretLooking, byRef := SplitEnv(f.Environment.Variables)
 		fn := Function{
 			Name: f.FunctionName, Runtime: f.Runtime, Handler: f.Handler,
 			Architectures: f.Architectures, MemorySize: f.MemorySize, Timeout: f.Timeout,
 			RoleArn: f.Role, CodeSha256: f.CodeSha256, CodeSize: f.CodeSize,
 			LastModified: f.LastModified,
-			EnvKeys:      keys, EnvNonSecret: safe, SecretLooking: secretLooking,
+			EnvKeys:      keys, EnvNonSecret: safe,
+			SecretLooking: secretLooking, SecretByReference: byRef,
 			DLQ:  f.DeadLetterConfig.TargetArn,
 			Tags: map[string]string{},
 		}
@@ -304,7 +333,7 @@ func (c *Capturer) captureAPIs(b *Baseline, owners map[string]string) error {
 		return err
 	}
 	for _, a := range apis.Items {
-		if !c.match(a.Name) {
+		if !c.matchOrSkip("apis", a.Name) {
 			continue
 		}
 		api := API{ID: a.Id, Name: a.Name, Type: "REST"}
@@ -400,7 +429,7 @@ func (c *Capturer) captureLogGroups(b *Baseline) error {
 		declared["/aws/lambda/"+f.Name] = true
 	}
 	for _, g := range groups.LogGroups {
-		if !c.match(g.LogGroupName) && !declared[g.LogGroupName] {
+		if !c.matchOrSkip("log groups", g.LogGroupName) && !declared[g.LogGroupName] {
 			continue
 		}
 		b.LogGroups = append(b.LogGroups, LogGroup{
@@ -427,7 +456,7 @@ func (c *Capturer) captureAlarms(b *Baseline, owners map[string]string) error {
 		return err
 	}
 	for _, a := range alarms.MetricAlarms {
-		if !c.match(a.AlarmName) {
+		if !c.matchOrSkip("alarms", a.AlarmName) {
 			continue
 		}
 		_, owned := owners[a.AlarmName]

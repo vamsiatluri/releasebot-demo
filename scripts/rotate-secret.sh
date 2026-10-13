@@ -65,7 +65,7 @@ for F in $FUNCS; do
            | STAMP="$STAMP" python3 -c '
 import sys, json, os
 v = json.load(sys.stdin)
-v["SECRET_GENERATION"] = os.environ["STAMP"]
+v["CONFIG_GENERATION"] = os.environ["STAMP"]
 print(json.dumps({"Variables": v}))')
 
   aws lambda update-function-configuration --function-name "$F" \

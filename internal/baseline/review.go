@@ -43,6 +43,14 @@ func Review(b *Baseline) []Finding {
 				"holds secret values in environment variables: " + strings.Join(fn.SecretLooking, ", "),
 				"Anyone who can read the function's configuration can read these. They must be moved deliberately, never copied between accounts by this or any tool."})
 		}
+		// ★ Reported as GOOD NEWS, because a review that only lists problems
+		// cannot show that a control is in place -- and a tool that stays
+		// silent about the fix reads identically before and after the work.
+		if len(fn.SecretByReference) > 0 {
+			f = append(f, Finding{Info, "lambda/" + fn.Name,
+				"secrets held BY REFERENCE: " + strings.Join(fn.SecretByReference, ", "),
+				"These hold an ssm:/secretsmanager: pointer resolved at INIT, not a value, so the function configuration carries no credential and a published version freezes a pointer rather than the secret. ⚠️ Rotation still takes effect only on the next cold start."})
+		}
 		if len(fn.Aliases) == 0 {
 			f = append(f, Finding{Warn, "lambda/" + fn.Name,
 				"has no alias",
@@ -112,6 +120,40 @@ func Review(b *Baseline) []Finding {
 				fmt.Sprintf("never expires (%s stored)", humanBytes(g.StoredBytes)),
 				"Created by Lambda rather than declared in a template, so it is owned by no stack, survives the decommission, and keeps billing after the project is finished."})
 		}
+	}
+
+	// ⛔ THE FILTER'S OWN EFFECT, reported before anything else it found.
+	//
+	// `--prefix releasebot` excluded five of six functions in the account this
+	// was built against, because they are named cutRelease, slackApprove and
+	// so on. The review then graded one function and read as a complete
+	// assessment. A scope that narrows itself silently is worse than a scope
+	// that is obviously wrong, because the output is indistinguishable from a
+	// small account.
+	if b.Prefix != "" && len(b.FilteredOut) > 0 {
+		var dropped, kept int
+		for _, n := range b.FilteredOut {
+			dropped += n
+		}
+		kept = len(b.Functions) + len(b.APIs) + len(b.LogGroups) + len(b.Alarms)
+		detail := ""
+		for class, n := range b.FilteredOut {
+			detail += fmt.Sprintf("%s %d, ", class, n)
+		}
+		detail = strings.TrimSuffix(detail, ", ")
+		sev := Info
+		// More thrown away than kept is the shape that produces a confident
+		// assessment of a fraction of the system.
+		if dropped > kept {
+			sev = Blocker
+		} else if dropped > 0 {
+			sev = Warn
+		}
+		f = append(f, Finding{sev, "scope",
+			fmt.Sprintf("the name filter %q excluded %d resource(s), kept %d", b.Prefix, dropped, kept),
+			"Excluded: " + detail + ". Everything below describes ONLY what matched. " +
+				"Re-run with no --prefix to see the whole account -- a filter that hides most of " +
+				"the system produces a report indistinguishable from a small account."})
 	}
 
 	for _, api := range b.APIs {
