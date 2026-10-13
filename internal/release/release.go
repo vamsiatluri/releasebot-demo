@@ -123,7 +123,14 @@ func (s *Service) Cut(ctx context.Context, cmd Command) (CutResult, error) {
 	if !created {
 		log.With("sha", sha).Warn("cut: branch already existed at the same commit, treating as success")
 	}
-	log.With("sha", sha).With("created", created).Info("cut: release branch ready")
+	// ⚠️ dry_run ON THE ACTION LINE, not only on the INIT line. A dry run
+	// logged "cut: release branch ready  created=true" identically to a real
+	// cut, and the only way to tell them apart was to correlate with a
+	// separate startup line in the same stream. During an incident that log
+	// says a branch exists when none does.
+	log.With("sha", sha).With("created", created).
+		With("dry_run", fmt.Sprintf("%t", s.DryRun)).
+		Info("cut: release branch ready")
 	log.Count("releasebot.cut.success", 1, "repo:"+cmd.Repo)
 
 	s.record(ctx, log, cmd, "cut", branch, sha, "")
@@ -154,7 +161,10 @@ func (s *Service) Mergeback(ctx context.Context, cmd Command) (MergebackResult, 
 		log.Error("mergeback: opening pull request failed")
 		return MergebackResult{}, err
 	}
-	log.With("pr", pr.HTMLURL).With("opened", opened).Info("mergeback: pull request ready")
+	// Same reason as Cut: a dry run must not log identically to a real one.
+	log.With("pr", pr.HTMLURL).With("opened", opened).
+		With("dry_run", fmt.Sprintf("%t", s.DryRun)).
+		Info("mergeback: pull request ready")
 
 	s.record(ctx, log, cmd, "mergeback", branch, "", pr.HTMLURL)
 	log.Count("releasebot.mergeback.success", 1, "repo:"+cmd.Repo)
