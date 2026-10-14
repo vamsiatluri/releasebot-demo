@@ -55,6 +55,17 @@ type Baseline struct {
 	Alarms     []Alarm    `json:"alarms"`
 	Notes      []string   `json:"notes"`
 
+	// ── The decommission half ────────────────────────────────────────────────
+	// Populated only by `capture -estate`. Absent on a migration capture, which
+	// is why `teardown` refuses to run on one rather than reporting an account
+	// with no buckets, no tables and no VPCs.
+	Estate     bool        `json:"estate"`
+	Buckets    []Bucket    `json:"buckets,omitempty"`
+	Tables     []Table     `json:"tables,omitempty"`
+	Parameters []Parameter `json:"parameters,omitempty"`
+	Networks   []Network   `json:"networks,omitempty"`
+	Simples    []Simple    `json:"simple,omitempty"`
+
 	// ⛔ WHAT THE NAME FILTER THREW AWAY, per resource class.
 	//
 	// `--prefix releasebot` is the obvious thing to type for a project called
@@ -203,4 +214,100 @@ type Alarm struct {
 	Actions        []string `json:"alarm_actions"`
 	ActionsEnabled bool     `json:"actions_enabled"`
 	StackOwned     bool     `json:"stack_owned"`
+}
+
+// ── The decommission half of the capture ─────────────────────────────────────
+//
+// ⛔ WHY THESE EXIST SEPARATELY FROM EVERYTHING ABOVE.
+//
+// The inventory you take to MIGRATE a system is not the inventory you need to
+// RETIRE one. The sections above answer "what do I have to rebuild?" -- which is
+// Lambda, IAM, API Gateway and the observability around them. A decommission
+// asks a different question: "what will still be here, and still billing, after
+// I delete the stacks?" That question reaches eleven more services, and the
+// expensive answers are all in resources nobody thinks of as part of the app --
+// a NAT gateway inside a VPC the stack happened to create, a user pool, a
+// distribution, a queue.
+//
+// ⚠️ AND SOME TEARDOWN TRAPS ARE NOT RESOURCES AT ALL, so they are deliberately
+// NOT modelled here. Object versions live INSIDE a bucket; a detached Lambda ENI
+// does not exist until AFTER its function is deleted; dependency order is a
+// sequence rather than a list. Those belong to the executor, not the inventory
+// -- see teardown.go. Pretending a scan can find them is how you get a teardown
+// that reports success and leaves the expensive half running.
+
+// Bucket is an S3 bucket, with the one property that decides whether a teardown
+// succeeds or fails on it.
+type Bucket struct {
+	Name string `json:"name"`
+	// ⛔ THE FIELD THIS TYPE EXISTS FOR. `aws s3 rm --recursive` removes CURRENT
+	// objects only; a versioned bucket keeps every old version plus a delete
+	// marker per removed object, and a bucket holding either is NOT empty. So
+	// `s3 ls` shows nothing and the stack delete still fails with a 409. And
+	// CloudFormation never empties a bucket for you -- emptying must happen
+	// BEFORE the stack delete, not after.
+	Versioning  string `json:"versioning,omitempty"` // Enabled | Suspended | ""
+	StackOwned  bool   `json:"stack_owned"`
+	OwningStack string `json:"owning_stack,omitempty"`
+}
+
+// Table is a DynamoDB table. Two separate things can stop it being deleted, and
+// they fail at different moments.
+type Table struct {
+	Name string `json:"name"`
+	// DeletionProtection refuses the delete outright, with a clear error.
+	DeletionProtection bool `json:"deletion_protection"`
+	// ⚠️ Retain is the quiet one: a correct `DeletionPolicy: Retain` on an audit
+	// table means NO stack delete ever removes it, so the teardown reports
+	// success and the table stays. It then blocks the next CREATE of that stack
+	// with AWS::EarlyValidation::ResourceExistenceCheck and no resource-level
+	// event naming it -- every failed attempt recreating the condition that
+	// fails the next one.
+	Retain      bool   `json:"deletion_policy_retain"`
+	ItemCount   int64  `json:"item_count"`
+	StackOwned  bool   `json:"stack_owned"`
+	OwningStack string `json:"owning_stack,omitempty"`
+}
+
+// Simple is any resource whose teardown question is only "does a stack own it?"
+// -- queues, topics, distributions, user pools, web ACLs, canaries. Modelling
+// each in its own struct would add types without adding answers.
+type Simple struct {
+	Class       string `json:"class"` // sqs | sns | cloudfront | cognito | wafv2 | synthetics
+	Name        string `json:"name"`
+	ID          string `json:"id,omitempty"`
+	Detail      string `json:"detail,omitempty"`
+	StackOwned  bool   `json:"stack_owned"`
+	OwningStack string `json:"owning_stack,omitempty"`
+}
+
+// Parameter is an SSM parameter -- NAME AND TYPE ONLY, never a value.
+//
+// ⛔ These are the configuration nothing owns. bootstrap.sh writes them with
+// put-parameter deliberately, so a published Lambda version freezes a POINTER to
+// its config rather than the values. The consequence at teardown: no stack owns
+// them, so no stack delete removes them, and sixteen of them survived every
+// delete in the sandbox.
+type Parameter struct {
+	Name string `json:"name"`
+	Type string `json:"type"` // String | StringList | SecureString
+}
+
+// Network is the VPC estate. The NAT gateway is the line item that matters:
+// it is the most expensive thing a forgotten stack can leave behind.
+type Network struct {
+	VpcID       string `json:"vpc_id"`
+	CidrBlock   string `json:"cidr_block,omitempty"`
+	IsDefault   bool   `json:"is_default"`
+	Subnets     int    `json:"subnets"`
+	NatGateways int    `json:"nat_gateways"`
+	Endpoints   int    `json:"vpc_endpoints"`
+	// ⚠️ A COUNT TAKEN NOW, which is not the count that will block the delete.
+	// A Lambda's hyperplane ENI is `in-use` while its function exists and only
+	// becomes `available` AFTER the function is gone -- so a scan before the
+	// teardown sees every one attached and skips them all. Recorded for context,
+	// never as the basis for a decision. The reaping happens mid-teardown.
+	ENIsNow     int    `json:"enis_at_capture"`
+	StackOwned  bool   `json:"stack_owned"`
+	OwningStack string `json:"owning_stack,omitempty"`
 }

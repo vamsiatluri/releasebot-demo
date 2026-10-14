@@ -26,6 +26,9 @@ type Capturer struct {
 	Region  string
 	Prefix  string // only resources whose name contains this are captured
 	Verbose bool
+	// Estate adds the eleven services a DECOMMISSION needs and a migration
+	// baseline does not. See captureEstate.
+	Estate bool
 
 	// Counts what match() rejected, per class, so the filter's effect is
 	// reportable instead of invisible. See Baseline.FilteredOut.
@@ -117,6 +120,16 @@ func (c *Capturer) Capture(label string) (*Baseline, error) {
 	}
 	if err := c.captureAlarms(b, owners); err != nil {
 		b.Notes = append(b.Notes, "alarms: "+err.Error())
+	}
+	// ⚠️ OPT-IN, because the two captures answer different questions and cost
+	// different amounts. A migration baseline wants Lambda/IAM/API Gateway and
+	// runs in seconds; the decommission estate reaches eleven more services and
+	// is noticeably slower. Making it a flag keeps the Phase 1 loop fast, and
+	// keeps `teardown` able to tell "no buckets in this account" apart from
+	// "nobody asked about buckets" -- which it does by refusing to plan from a
+	// capture whose Estate flag is false.
+	if c.Estate {
+		c.captureEstate(b, owners)
 	}
 	if len(c.skipped) > 0 {
 		b.FilteredOut = c.skipped

@@ -10,8 +10,12 @@
 #   # Phase 4/5. Do the two accounts agree?
 #   scripts/assess.sh msnbc-dev us-east-1 --against msnbc-prod us-east-1
 #
+#   # Phase 7. What has to be removed, in what order, and what will NOT go.
+#   scripts/assess.sh msnbc-dev us-east-1 --teardown
+#
 # Options
 #   --against <profile> <region>   capture a second account and diff the two
+#   --teardown                     also plan the DECOMMISSION (Phase 7)
 #   --prefix <string>              only resources whose name contains this
 #   --label <string>               name used in the reports (default: profile)
 #   --out <dir>                    output directory (default: build/assess/<date>-<label>)
@@ -42,7 +46,7 @@ command -v go  >/dev/null     || die "go is not on PATH"
 [ $# -ge 2 ] || { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 3; }
 PROFILE="$1"; REGION="$2"; shift 2
 
-AGAINST_PROFILE=""; AGAINST_REGION=""; PREFIX=""; LABEL=""; OUT=""
+AGAINST_PROFILE=""; AGAINST_REGION=""; PREFIX=""; LABEL=""; OUT=""; TEARDOWN=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --against)
@@ -50,6 +54,7 @@ while [ $# -gt 0 ]; do
       # silently capturing the same region twice and reporting "no differences".
       [ $# -ge 3 ] || die "--against needs a profile AND a region"
       AGAINST_PROFILE="$2"; AGAINST_REGION="$3"; shift 3 ;;
+    --teardown) TEARDOWN=1; shift ;;
     --prefix) [ $# -ge 2 ] || die "--prefix needs a value"; PREFIX="$2"; shift 2 ;;
     --label)  [ $# -ge 2 ] || die "--label needs a value";  LABEL="$2";  shift 2 ;;
     --out)    [ $# -ge 2 ] || die "--out needs a value";    OUT="$2";    shift 2 ;;
@@ -84,6 +89,15 @@ if [ -n "$AGAINST_PROFILE" ]; then
   fi
 fi
 
+# ⛔ REFUSE THE COMBINATION AT THE DOOR. A teardown planned from a filtered
+# capture deletes what matched and leaves the rest billing, while reporting
+# success -- the same shape as `--prefix releasebox`, which once hid five of six
+# functions behind a confident-looking report. `baseline teardown` refuses it
+# too; this catches it before spending the minutes on a capture it will reject.
+if [ -n "$TEARDOWN" ] && [ -n "$PREFIX" ]; then
+  die "--teardown and --prefix are mutually exclusive: a decommission planned from part of an account is worse than none"
+fi
+
 # Build rather than `go run`: one binary, used for every call below, so a
 # mid-run rebuild cannot change the tool between the capture and the compare.
 BIN="$(mktemp -d)/baseline"
@@ -95,7 +109,13 @@ bump() { [ "$1" -gt "$worst" ] && worst="$1"; return 0; }
 
 # ── 1. Read the source account ───────────────────────────────────────────────
 note "1/4  reading $LABEL"
-"$BIN" capture -profile "$PROFILE" -region "$REGION" -prefix "$PREFIX" \
+# --estate adds the eleven services a DECOMMISSION needs and a migration
+# baseline does not. Opt-in because it is noticeably slower, and because
+# `teardown` can then tell "this account has no buckets" apart from "nobody
+# asked about buckets".
+ESTATE=""; [ -n "$TEARDOWN" ] && ESTATE="-estate"
+# shellcheck disable=SC2086  # ESTATE is deliberately a word-split flag or empty
+"$BIN" capture -profile "$PROFILE" -region "$REGION" -prefix "$PREFIX" $ESTATE \
        -label "$LABEL" -out "$OUT/source.json"
 bump $?
 
@@ -114,6 +134,19 @@ note "3/4  drafting a template from what is actually there"
   || die "generate failed"
 printf '     %s  (%s lines — read it, do not apply it)\n' \
   "$OUT/generated.yaml" "$(wc -l < "$OUT/generated.yaml" | tr -d ' ')"
+
+# ── 3b. Plan the decommission, when asked ────────────────────────────────────
+# ⚠️ Phase 1 and Phase 7 from ONE inventory. The teardown is DERIVED from the
+# capture rather than from a hand-written list, which is the defect it exists to
+# prevent: sandbox-down.sh enumerated a list that predated three stacks and
+# would have printed "the account is empty" while leaving a CloudFront
+# distribution, a Cognito pool, a VPC with a NAT gateway, a table and a queue
+# running.
+if [ -n "$TEARDOWN" ]; then
+  note "3b/4  planning the decommission"
+  "$BIN" teardown -in "$OUT/source.json" -out "$OUT/teardown.md" || die "teardown planning refused"
+  printf '     %s  (a PLAN, not a script — this is the irreversible phase)\n' "$OUT/teardown.md"
+fi
 
 # ── 4. Compare, when there is something to compare against ───────────────────
 if [ -n "$AGAINST_PROFILE" ]; then

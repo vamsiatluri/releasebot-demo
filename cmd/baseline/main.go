@@ -36,6 +36,8 @@ func main() {
 		compare(os.Args[2:])
 	case "generate":
 		generate(os.Args[2:])
+	case "teardown":
+		teardown(os.Args[2:])
 	default:
 		usage()
 	}
@@ -61,6 +63,14 @@ func usage() {
             A STARTING-POINT template. Read it, delete what should not come
             across, then deploy to a sandbox and compare until the only
             differences left are intended.
+
+  teardown  -in FILE [-out FILE]
+            An ORDERED decommission plan, derived from the capture rather than
+            from a hand-written list -- which is the bug it exists to prevent.
+            Requires a capture taken with -estate, and REFUSES a capture
+            narrowed by -prefix: a teardown built from a partial inventory
+            deletes what matched and leaves the rest billing, while reporting
+            success.
 `)
 	os.Exit(3)
 }
@@ -77,9 +87,13 @@ func capture(args []string) {
 	label := fs.String("label", "capture", "label for reports")
 	out := fs.String("out", "", "write JSON here (default: stdout)")
 	verbose := fs.Bool("v", false, "print each AWS call")
+	estate := fs.Bool("estate", false,
+		"also read the 11 services a DECOMMISSION needs (S3, DynamoDB, SSM, VPC, "+
+			"SQS, SNS, CloudFront, Cognito, WAF). Slower. Required by `teardown`.")
 	_ = fs.Parse(args)
 
-	c := &baseline.Capturer{Profile: *profile, Region: *region, Prefix: *prefix, Verbose: *verbose}
+	c := &baseline.Capturer{Profile: *profile, Region: *region, Prefix: *prefix,
+		Verbose: *verbose, Estate: *estate}
 	b, err := c.Capture(*label)
 	if err != nil {
 		die(err)
@@ -92,6 +106,10 @@ func capture(args []string) {
 	} else {
 		fmt.Printf("captured account %s -> %s (%d functions, %d roles, %d APIs)\n",
 			b.Account, *out, len(b.Functions), len(b.Roles), len(b.APIs))
+		if b.Estate {
+			fmt.Printf("  estate: %d buckets, %d tables, %d parameters, %d vpcs, %d other\n",
+				len(b.Buckets), len(b.Tables), len(b.Parameters), len(b.Networks), len(b.Simples))
+		}
 	}
 	exitOn(baseline.Review(b))
 }
@@ -174,3 +192,30 @@ func exitOn(f []baseline.Finding) {
 }
 
 func die(err error) { fmt.Fprintln(os.Stderr, "baseline:", err); os.Exit(3) }
+
+func teardown(args []string) {
+	fs := flagset("teardown")
+	in := fs.String("in", "", "capture JSON")
+	out := fs.String("out", "", "write the plan here (default: stdout)")
+	_ = fs.Parse(args)
+
+	b := load(*in)
+	plan, err := baseline.BuildTeardown(b)
+	if err != nil {
+		// ⛔ Exit 3 = the TOOL refused, which is deliberately not exit 1 ("found
+		// blockers"). A refusal must never be readable as a clean result -- that
+		// is the same confusion as a teardown reporting an empty account.
+		fmt.Fprintf(os.Stderr, "\033[31m✗ %v\033[0m\n", err)
+		os.Exit(3)
+	}
+	text := plan.Render()
+	if *out == "" {
+		fmt.Print(text)
+		return
+	}
+	if err := os.WriteFile(*out, []byte(text), 0o600); err != nil {
+		die(err)
+	}
+	fmt.Printf("teardown plan -> %s (%d steps, %d resources no stack owns)\n",
+		*out, len(plan.Steps), len(plan.Unowned))
+}
