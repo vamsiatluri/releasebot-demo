@@ -30,6 +30,7 @@ import (
 	"github.com/vamsiatluri/releasebot-migration/internal/awssig"
 	"github.com/vamsiatluri/releasebot-migration/internal/events"
 	"github.com/vamsiatluri/releasebot-migration/internal/runtime"
+	"github.com/vamsiatluri/releasebot-migration/internal/secretref"
 )
 
 // A pair is one logical function: the production copy and its test twin.
@@ -497,7 +498,7 @@ func storeETag(path, etag, body string) {
 // at most a dozen changed reads per release -- well inside 60/hour -- and a
 // held gate costs nothing at all.
 func runTTL() time.Duration {
-	if os.Getenv("GITHUB_TOKEN") != "" {
+	if githubToken() != "" {
 		return 10 * time.Second
 	}
 	if runCache.val != nil && !terminal(runCache.val.Status) {
@@ -547,7 +548,7 @@ func cachedRun(ctx context.Context) *runState {
 // view, not an outage, and the UI says which part is missing.
 func readRun(ctx context.Context) *runState {
 	owner, repo := os.Getenv("GITHUB_OWNER"), os.Getenv("GITHUB_REPO")
-	token, wf := os.Getenv("GITHUB_TOKEN"), os.Getenv("GITHUB_WORKFLOW_FILE")
+	token, wf := githubToken(), os.Getenv("GITHUB_WORKFLOW_FILE")
 	if owner == "" || repo == "" || wf == "" {
 		return nil
 	}
@@ -1169,4 +1170,53 @@ func apiIDFromBase(base string) string {
 		return base[:i]
 	}
 	return ""
+}
+
+// ── The dashboard's GitHub token ────────────────────────────────────────────
+//
+// Resolved through secretref like every other secret here, so it can be an
+// `ssm:` reference rather than a plaintext environment variable.
+//
+// ⚠️ Resolved ONCE and memoised. This is called per request on the hot path;
+// an SSM round trip per request would put Parameter Store's latency and
+// availability in front of the dashboard's.
+//
+// ⛔ AND IT MUST BE A ZERO-PERMISSION TOKEN. The only thing it buys is rate
+// limit: anonymous reads are 60/hour per egress IP and a Lambda's egress is a
+// shared NAT address, so a busy afternoon exhausts it. Everything this page
+// reads from GitHub is PUBLIC. A token with any permission at all would be
+// handing a read-only status page the ability to change things, for no gain --
+// which is why scripts/set-dashboard-token.sh refuses one that can write, and
+// why verify-secrets.sh re-checks that it still cannot.
+var ghToken struct {
+	sync.Once
+	val string
+}
+
+func githubToken() string {
+	ghToken.Do(func() {
+		raw := os.Getenv("GITHUB_TOKEN")
+		if raw == "" {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		v, err := secretref.Resolve(ctx, raw)
+		if err != nil {
+			// ⚠️ Degrade to anonymous rather than fail. The page's whole AWS
+			// half is unaffected, and a slower refresh is a far better outcome
+			// than a blank dashboard.
+			fmt.Fprintf(os.Stderr, "dashboard: could not resolve GITHUB_TOKEN, falling back to anonymous reads: %v\n", err)
+			return
+		}
+		// ⛔ A reference that did not resolve must NOT be used as a token: it
+		// would be sent as a bearer credential and GitHub would 401, which
+		// reads as a bad token rather than as a resolver that did not run.
+		if secretref.IsReference(v) {
+			fmt.Fprintln(os.Stderr, "dashboard: GITHUB_TOKEN is still a reference after resolution; using anonymous reads")
+			return
+		}
+		ghToken.val = v
+	})
+	return ghToken.val
 }

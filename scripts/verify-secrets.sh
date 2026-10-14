@@ -103,6 +103,56 @@ else
   fi
 fi
 
+# ── 2b. the dashboard token: it must STILL be unable to do anything ────────
+#
+# ⚠️ A token's permissions can be WIDENED after it is stored, and nothing would
+# re-check. This page reads only PUBLIC data; the token exists solely to lift
+# the anonymous 60/hour rate limit. So the assertion is not "is it present" but
+# "is it still powerless".
+D=$(read_secret dashboard-github-token)
+if [ -z "$D" ] || [ "$D" = "None" ]; then
+  unproven "dashboard-github-token: not set (the dashboard reads anonymously, 60/hour per egress IP)"
+else
+  case "$D" in
+    ghp_*) bad "dashboard-github-token is a CLASSIC token — there is no zero-permission classic PAT, and a read-only page must not hold one" ;;
+    *)
+      DH=$(mktemp)
+      curl -sS -D "$DH" -o /dev/null -H "Authorization: Bearer $D" \
+        https://api.github.com/user 2>/dev/null
+      DCODE=$(awk 'NR==1{print $2}' "$DH")
+      DSC=$(grep -i '^x-oauth-scopes:' "$DH" | cut -d: -f2- | tr -d '\r' | sed 's/^ *//')
+      rm -f "$DH"
+      if [ "$DCODE" != "200" ]; then
+        bad "dashboard-github-token: GitHub returned HTTP $DCODE (expired or revoked)"
+      elif [ -n "$DSC" ]; then
+        bad "dashboard-github-token now reports scopes [$DSC] — it has been widened into a classic-style credential"
+      else
+        # The capability test: it must still be unable to write.
+        DSHA=$(curl -sS -H "Authorization: Bearer $D" \
+                "https://api.github.com/repos/$OWNER/$REPO/git/ref/heads/main" 2>/dev/null \
+               | python3 -c "import sys,json;print(json.load(sys.stdin).get('object',{}).get('sha',''))" 2>/dev/null)
+        if [ -z "$DSHA" ]; then
+          unproven "dashboard-github-token: could not read main, so the write test did not run"
+        else
+          DREF="refs/heads/dashboard-permcheck-$$"
+          DW=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+                -H "Authorization: Bearer $D" -H 'Accept: application/vnd.github+json' \
+                "https://api.github.com/repos/$OWNER/$REPO/git/refs" \
+                -d "{\"ref\":\"$DREF\",\"sha\":\"$DSHA\"}" 2>/dev/null)
+          if [ "$DW" = "201" ]; then
+            curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $D" \
+              "https://api.github.com/repos/$OWNER/$REPO/git/$DREF" 2>/dev/null
+            bad "dashboard-github-token CAN NOW WRITE to $OWNER/$REPO — it has been granted permissions it must not have"
+          else
+            DLIM=$(curl -sS -H "Authorization: Bearer $D" https://api.github.com/rate_limit 2>/dev/null \
+                   | python3 -c "import sys,json;print(json.load(sys.stdin)['resources']['core']['limit'])" 2>/dev/null)
+            ok "dashboard-github-token: still powerless (write refused, HTTP $DW) and lifts the limit to ${DLIM:-?}/hour"
+          fi
+        fi
+      fi ;;
+  esac
+fi
+
 # ── 3. the signing secret, proven against the RUNNING function ─────────────
 # ⚠️ Not "is it 32 hex characters" -- the wrong 32 hex characters look
 # identical. The only proof is a request the deployed function accepts.
