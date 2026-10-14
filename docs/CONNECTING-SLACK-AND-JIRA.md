@@ -103,11 +103,22 @@ this in week one; it changes the acceptance criteria.
 
 | field | value |
 |---|---|
-| Command | `/cutrelease` |
+| Command | `/cut` |
 | Request URL | `https://<api-id>.execute-api.<region>.amazonaws.com/prod/beta/cut` |
 | Usage hint | `news-app 5.4.0` |
 
-Repeat for `/mergeback` → `.../prod/beta/merge`.
+Repeat for `/merge` → `.../prod/beta/merge`.
+
+⚠️ **Use THEIR names, not ours.** The scope of work calls them *"two commands named
+cut and merge"*. Whatever the existing workspace already uses wins over both — a
+slash command is muscle memory for the people releasing, and a migration is the
+wrong moment to retrain them.
+
+⚠️ **A slash command has exactly ONE Request URL**, so a command cannot address
+both stages. To drive the `test` stage from Slack, create a SECOND pair pointed at
+`.../test/beta/cut` and `.../test/beta/merge`. That is not duplication for its own
+sake: it is what lets the cutover move the test surface first, and prove it, while
+production is still answered by the old account.
 
 ⚠️ **Point them at a CUSTOM DOMAIN if there is one.** The `execute-api` URL contains the
 API id, and the API id **changes when the API is recreated** — which is exactly what a

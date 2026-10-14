@@ -60,6 +60,41 @@ thing.**
 
 ---
 
+## ⛔ Get the numbers right — FOUR programs, TWO commands
+
+Their SOW uses both numbers, counting different things, and it is easy to merge
+them into one wrong sentence:
+
+| their words | what it counts |
+|---|---|
+| Phase 2 — *"create **four** permission identities and **four** small programs"* | IAM roles · Lambda **functions** |
+| Scope — *"**two** commands named **cut** and **merge**"* | the **commands** |
+| Phase 5 — *"test the **two** commands"* | the **commands** |
+
+**Four functions because there are two jobs, each with a live and a test version** —
+and each gets its OWN role, which is the whole point: the test function's
+credentials provably cannot reach production.
+
+**Say it like this:**
+
+> "Four functions and four roles, because there are two jobs — cut and merge —
+> and each exists live and test, with its own identity. Two commands, four
+> deployments of them."
+
+Then, if you want to show the structure rather than just the count:
+
+> "They sit behind one API with two stages. A stage variable picks which function
+> a route hits, so `/prod/beta/cut` and `/test/beta/cut` are the same route
+> pointed at different Lambdas. In Slack that means a separate slash command per
+> stage, because a slash command has exactly one Request URL — which is precisely
+> what lets the cutover move the test surface first and prove it, while
+> production is still answered by the old account."
+
+⚠️ Do **not** say "four slash commands." Their Phase 5 line — *"test the two
+commands"* — is sitting in the document they have open.
+
+---
+
 ## When you don't know — the three-part move
 
 This is the most important skill in this interview, and from thirty years in it
