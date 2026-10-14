@@ -26,18 +26,41 @@
     --blocking:#DB7764; --blocking-soft:#3A1F1A;
   }}
   *{box-sizing:border-box}
+  /* ── The page measure ──────────────────────────────────────────────────────
+     ONE variable for the masthead and the body, because they used to carry the
+     same literal twice and a change to one silently misaligned the header from
+     the content under it.
+
+     Wide on purpose: this page is a DASHBOARD -- lane grids, version tables and
+     the step timeline are all things you read by scanning across, and a 980px
+     cap on a 2560px monitor was throwing away the room they needed while the
+     tables scrolled sideways inside it.
+
+     ⚠️ But width is only free for TABULAR content. Running prose past ~75
+     characters a line is measurably harder to read, so every prose block keeps
+     its own ch-based cap (.sechead p, .doc, .fdetail p, .freq p) and those are
+     NOT widened by this. The shell grows; the paragraphs do not.
+
+     FLUID, not merely a bigger number. A fixed cap -- 980px, or 1680px -- is
+     still the wrong width on every monitor that is not that size, and on a wide
+     one it reads as empty rails down both sides. So the shell takes the viewport
+     and only the gutter is reserved. The grids inside are all
+     `auto-fit,minmax(...,1fr)`, so they ADD columns as the room appears rather
+     than stretching a fixed number of them. */
+  :root{--measure:100%; --gutter:clamp(16px,2.5vw,44px)}
   body{margin:0; background:var(--ground); color:var(--ink);
        font-family:var(--body); font-size:16px; line-height:1.6;
        -webkit-font-smoothing:antialiased}
   header{background:var(--surface); border-bottom:1px solid var(--rule)}
-  .mast{max-width:980px; margin:0 auto; padding:26px 24px 22px;
+  .mast{max-width:var(--measure); margin:0 auto;
+        padding:26px var(--gutter) 22px;
         display:flex; flex-wrap:wrap; gap:14px 28px; align-items:flex-end; justify-content:space-between}
   .lbl{font-family:var(--display); font-size:11px; font-weight:600;
        letter-spacing:.12em; text-transform:uppercase; color:var(--muted)}
   h1{font-family:var(--display); font-size:clamp(25px,4vw,36px); font-weight:700;
      letter-spacing:-.02em; margin:4px 0 0}
   h2{font-family:var(--display); font-size:19px; font-weight:600; margin:0}
-  .wrap{max-width:980px; margin:0 auto; padding:0 24px 72px}
+  .wrap{max-width:var(--measure); margin:0 auto; padding:0 var(--gutter) 72px}
   section{margin-top:36px}
   .sechead{margin-bottom:12px}
   .sechead p{margin:4px 0 0; color:var(--muted); font-size:14.5px; max-width:62ch}
@@ -224,7 +247,31 @@
   .tabs .count{font-family:var(--mono); font-size:10px; color:var(--muted); margin-left:6px}
 
   /* long-form panels */
-  .doc{max-width:74ch}
+  /* ── The reference tabs ────────────────────────────────────────────────────
+     A content column that stays READABLE while the shell is full-width.
+
+     Prose does not get wider just because the monitor is: past roughly 75
+     characters a line the eye loses its place on the return sweep. But a 74ch
+     column pinned to the LEFT of a 1900px window is its own problem -- it reads
+     as an unfinished page with a thousand pixels of nothing beside it. So the
+     column is CENTRED, and the things that genuinely benefit from width are
+     allowed to break out of it:
+
+       · `pre` -- shell invocations here are long multi-line commands with
+         backslash continuations, and wrapping them at 74ch made them harder to
+         read than the width ever did;
+       · tables, which scroll sideways inside 74ch and do not need to.
+
+     Done with a three-track grid rather than negative margins, so the break-out
+     cannot overflow the viewport: the outer tracks simply collapse to 0 when
+     there is no room, and the layout degrades to the single column on a phone
+     with nothing to undo. */
+  .doc{display:grid; grid-template-columns:
+         minmax(0,1fr) minmax(0,74ch) minmax(0,1fr)}
+  .doc > *{grid-column:2}
+  .doc > pre, .doc > .tblwrap, .doc > table{
+         grid-column:1/-1; justify-self:center; width:100%;
+         max-width:min(118ch,100%)}
   .doc h3{font-family:var(--display); font-size:17px; color:var(--ink); margin:32px 0 6px}
   .doc h3:first-child{margin-top:0}
   .doc h4{font-family:var(--mono); font-size:10.5px; letter-spacing:.09em; text-transform:uppercase;
