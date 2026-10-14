@@ -100,6 +100,26 @@ type jobState struct {
 	Steps      []stepState `json:"steps"`
 }
 
+// ghBudget is GitHub's OWN account of which credential it just saw.
+//
+// ⛔ THIS EXISTS BECAUSE NOTHING ELSE PROVES THE TOKEN IS WORKING. githubToken()
+// logs only when resolution FAILS, and the no-token path returns silently
+// without logging at all -- so an empty GITHUB_TOKEN and a correctly resolved
+// one produce byte-identical function logs. "No error in the log" is therefore
+// not evidence of anything, which is the exact shape of defect this project
+// keeps finding: verifying our own report instead of the resulting state.
+//
+// `X-RateLimit-Limit` is asserted by the OTHER SIDE on every response --
+// 200, 304 and 403 alike -- and it is 60 for an anonymous read against 5000
+// for an authenticated one. So it is a positive, externally-sourced fact that
+// a deploy actually delivered the credential, and it is visible on the page
+// rather than buried in CloudWatch.
+type ghBudget struct {
+	Limit     int  `json:"limit"`
+	Remaining int  `json:"remaining"`
+	Authed    bool `json:"authed"`
+}
+
 type runState struct {
 	Number     int        `json:"number"`
 	ID         int64      `json:"id"`
@@ -120,6 +140,8 @@ type runState struct {
 	// exactly the moment it was needed.
 	StaleReason string `json:"staleReason,omitempty"`
 	Error       string `json:"error,omitempty"`
+	// Set from the last GitHub response of this read, whatever its status.
+	Budget *ghBudget `json:"budget,omitempty"`
 }
 
 // One published version, and whether it is actually reachable as a rollback
@@ -534,6 +556,14 @@ func cachedRun(ctx context.Context) *runState {
 	if fresh.Error != "" && runCache.val != nil && runCache.val.Error == "" {
 		stale := *runCache.val
 		stale.Stale, stale.StaleReason = true, fresh.Error
+		// ⚠️ Take the FRESH budget, not the cached one. This is the same trap
+		// StaleReason was added for: the stale path copies the last-good value,
+		// so without this it would report the remaining count from before the
+		// failed read -- i.e. a healthy budget at the exact moment the budget
+		// is what ran out.
+		if fresh.Budget != nil {
+			stale.Budget = fresh.Budget
+		}
 		return &stale
 	}
 	fresh.ReadAt = time.Now().UTC().Format(time.RFC3339)
@@ -552,6 +582,10 @@ func readRun(ctx context.Context) *runState {
 	if owner == "" || repo == "" || wf == "" {
 		return nil
 	}
+
+	// Written by every `get` below; the LAST response wins, which is the one
+	// whose remaining count is current.
+	var budget *ghBudget
 
 	get := func(path string, out any) error {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
@@ -575,6 +609,14 @@ func readRun(ctx context.Context) *runState {
 		}
 		defer resp.Body.Close()
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+
+		// Recorded on EVERY response, including a 304 and a 403 -- those carry
+		// the headers too, and a page serving entirely from cache would
+		// otherwise never learn which credential it is using.
+		if lim, err := strconv.Atoi(resp.Header.Get("X-RateLimit-Limit")); err == nil && lim > 0 {
+			rem, _ := strconv.Atoi(resp.Header.Get("X-RateLimit-Remaining"))
+			budget = &ghBudget{Limit: lim, Remaining: rem, Authed: lim > 60}
+		}
 
 		// 304: nothing changed, the body is empty, and this request was FREE.
 		if resp.StatusCode == http.StatusNotModified {
@@ -602,7 +644,16 @@ func readRun(ctx context.Context) *runState {
 						mins = fmt.Sprintf(", resets in %dm", int(d.Minutes())+1)
 					}
 				}
-				return fmt.Errorf("github rate limit reached (60/hour unauthenticated, shared egress IP)%s", mins)
+				// ⚠️ Name the REAL cap, read off the response. Hardcoding
+				// "60/hour unauthenticated" told the operator the dashboard was
+				// anonymous whether it was or not -- so once a token is wired
+				// in, the one message that would reveal the token had stopped
+				// working would still be blaming the anonymous limit.
+				capHit := "60/hour unauthenticated, shared egress IP"
+				if budget != nil && budget.Authed {
+					capHit = fmt.Sprintf("%d/hour authenticated", budget.Limit)
+				}
+				return fmt.Errorf("github rate limit reached (%s)%s", capHit, mins)
 			}
 			return fmt.Errorf("github returned %d", resp.StatusCode)
 		}
@@ -624,7 +675,7 @@ func readRun(ctx context.Context) *runState {
 		} `json:"workflow_runs"`
 	}
 	if err := get("/actions/workflows/"+wf+"/runs?per_page=1", &runs); err != nil {
-		return &runState{Error: err.Error()}
+		return &runState{Error: err.Error(), Budget: budget}
 	}
 	if len(runs.WorkflowRuns) == 0 {
 		return nil
@@ -672,6 +723,7 @@ func readRun(ctx context.Context) *runState {
 			st.Jobs = append(st.Jobs, js)
 		}
 	}
+	st.Budget = budget
 	return st
 }
 

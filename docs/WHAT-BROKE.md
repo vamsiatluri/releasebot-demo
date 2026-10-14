@@ -110,7 +110,7 @@ rather than to the code.
 
 `scripts/bootstrap.sh` was written from a working account and had never been run against
 nothing. Its first execution in a brand-new AWS account (450315222669, created for this)
-found **fifteen real defects in a row**, none of which could surface anywhere else.
+found **fifteen real defects in a row** (a sixteenth, #16, came later from the same family), none of which could surface anywhere else.
 
 | # | What happened | Why only an empty account shows it |
 |---|---|---|
@@ -406,10 +406,54 @@ supersede has to be announced by the *survivor* — the superseding run now name
 displaced, and Slack says the older message's button is inert. The old message is not edited or
 deleted: a channel is a record, and appending to it beats rewriting it.
 
-★ Three of the fifteen (#5, #9, #11) are the same mistake in different clothes:
+### #16 — an empty default made a green deploy ship no credential
+
+The dashboard reads GitHub anonymously at **60 requests/hour, and that cap is per EGRESS IP**
+— a Lambda's egress is a shared NAT address, so the limit is consumed by everything behind it.
+A credential lifts it to 5,000/hour, and because this page only reads a **public** repository
+the credential needs **no permissions at all**: the only thing it buys is identity for
+rate-limiting. So the token is deliberately zero-permission, and
+`scripts/set-dashboard-token.sh` proves that by **attempting a write and refusing the token if
+the write succeeds**.
+
+All of that was built and correct. The token was created, stored as a SecureString, and
+verified. The dashboard still ran anonymously for a day.
+
+`GitHubToken` defaults to `''` in the template, and the deploy script never passed it. So the
+deploy reported `UPDATE_COMPLETE` having set `GITHUB_TOKEN=""`, and the page kept hitting
+60/hour — reported to me as *"it's not showing the rate limit anymore"* when the hourly window
+simply rolled over.
+
+⛔ **And every available signal was silent.** The resolver logs only when resolution *fails*;
+the no-token path returns without logging at all. So a correctly wired token and a missing one
+produce **byte-identical function logs** — "no error in the log" was not evidence of anything.
+
+★ **The fix was to stop asking ourselves and ask the other side.** GitHub sends
+`X-RateLimit-Limit` on every response — 304s and 403s included — and it is **60 anonymous
+against 5000 authenticated**. That is a positive fact, asserted by the party that would know,
+and it cannot be satisfied by a config value that merely looks right. It is now:
+
+- surfaced in the API payload as `run.budget`, and on the page, so the state is visible;
+- asserted by the deploy, which invokes the function and **fails** if a credential was
+  configured and GitHub read the request as anonymous;
+- re-checked by `verify-secrets.sh`, because a token's permissions can be widened later.
+
+Two smaller defects fell out of the same work. The rate-limit message hardcoded
+`60/hour unauthenticated`, so once a token was wired in, the one message that would reveal the
+token had stopped working would still have blamed the anonymous limit. And the stale path
+copied the last-good budget while discarding the fresh one — reporting a healthy budget at
+precisely the moment the budget had run out, which is the identical mistake `staleReason` was
+added to fix (#15).
+
+★ **Measured, not assumed:** a conditional re-read costs **zero** — three unchanged reads in a
+row left the remaining count untouched at 4,973. So the cost is per *change*, not per poll,
+which is why an idle dashboard is free and a live release run is the expensive case.
+
+★ Four of these (#5, #9, #11, #16) are the same mistake in different clothes:
 **trusting an operation's report instead of reading the resulting state.** The content key
 that was uploaded but never referenced, the version that was published but never pointed
-at, the bucket that was emptied but not of its versions.
+at, the bucket that was emptied but not of its versions, and the credential that was stored
+but never delivered. In every case the tool said it had succeeded, and had.
 
 ★ The lesson: **a build script written against an account that already has everything has
 never been tested.** All fifteen were invisible in the account it was written in, and each of

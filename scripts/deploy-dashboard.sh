@@ -70,33 +70,53 @@ GH_OWNER="${GH_SLUG%%/*}"; GH_REPO="${GH_SLUG##*/}"
 [ -n "$GH_OWNER" ] && [ -n "$GH_REPO" ] || { echo "✗ could not read the GitHub slug" >&2; exit 1; }
 echo "pipeline panel reads: $GH_OWNER/$GH_REPO"
 
-# ⛔ NO TOKEN BY DEFAULT, and that is the fix rather than a limitation.
+# ── The dashboard's GitHub credential ────────────────────────────────────────
 #
-# This page only ever READS a PUBLIC repository. It used to borrow the approval
-# token -- a classic PAT with `repo` scope, i.e. push access to every repository
-# the owner can reach -- purely to escape GitHub's 60/hour anonymous cap. That
-# is an enormous grant for a read-only dashboard, and the deploy announced it on
-# every run precisely because nobody should get used to it.
+# This page only ever READS a PUBLIC repository, so it needs no permission at
+# all. What it needs is an IDENTITY: anonymous reads are capped at 60/hour PER
+# EGRESS IP and a Lambda's egress is a shared NAT address, so an ordinary busy
+# afternoon exhausts the cap for everyone behind it. A credential moves that to
+# 5000/hour. Conditional requests already make a 304 free, which is why the page
+# works with no credential at all -- but a burst of real changes still hits 60.
 #
-# The cap is now handled by CONDITIONAL REQUESTS instead: the API caches each
-# ETag and sends If-None-Match, and a 304 does not count against the limit. An
-# idle dashboard costs nothing; a busy one costs only its real changes. So the
-# over-grant is not reduced, it is GONE -- there is no credential to scope
-# wrongly, nothing to rotate, and nothing to leak.
+# ⛔ SO IT IS A ZERO-PERMISSION TOKEN, and the whole point is that it can do
+# nothing. scripts/set-dashboard-token.sh refuses a classic PAT, refuses one
+# reporting any scope, and ATTEMPTS A WRITE -- refusing the token if the write
+# succeeds. verify-secrets.sh re-runs that check.
 #
-# RELEASEBOT_DASHBOARD_TOKEN is still honoured if you want a faster refresh
-# (10s instead of 120s). If you set it, make it a FINE-GRAINED PAT with
-# Actions: Read on this one repository and nothing else.
-TOKEN="${RELEASEBOT_DASHBOARD_TOKEN:-}"
-if [ -n "$TOKEN" ]; then
-  case "$TOKEN" in
-    github_pat_*) TOKEN_SOURCE="fine-grained token supplied (read-only, correct)" ;;
-    ghp_*) TOKEN_SOURCE="⚠️  a CLASSIC token was supplied — it carries far more than this page needs" ;;
-    *) TOKEN_SOURCE="token supplied (unrecognised prefix)" ;;
-  esac
-else
-  TOKEN_SOURCE="no credential — public repo + conditional requests"
+# ⚠️ THE DEFAULT IS THE SSM REFERENCE, NOT EMPTY, and that is a defect fix.
+# `GitHubToken` defaults to '' in the template, so a deploy that simply did not
+# mention it reported UPDATE_COMPLETE while leaving GITHUB_TOKEN="" -- the
+# dashboard stayed anonymous and nothing said so. Making the reference the
+# default means the deploy has to be told to go WITHOUT a credential, rather
+# than falling into it silently.
+TOKEN_PARAM="/releasebot/${TOKEN_STAGE:-prod}/secrets/dashboard-github-token"
+TOKEN="${RELEASEBOT_DASHBOARD_TOKEN-}"
+if [ -z "${RELEASEBOT_DASHBOARD_TOKEN+set}" ]; then
+  # Unset (as opposed to deliberately empty): adopt the reference IF the
+  # parameter actually exists in THIS account. An `ssm:` reference to a missing
+  # parameter would resolve to nothing and degrade to anonymous -- working,
+  # slower, and for a reason nothing would explain.
+  if aws ssm get-parameter --name "$TOKEN_PARAM" --region "$REGION" \
+       --query 'Parameter.Name' --output text >/dev/null 2>&1; then
+    TOKEN="ssm:$TOKEN_PARAM"
+  fi
 fi
+
+case "$TOKEN" in
+  ssm:*|secretsmanager:*)
+        TOKEN_SOURCE="reference to $TOKEN_PARAM (resolved at INIT, zero-permission)" ;;
+  github_pat_*)
+        # ⚠️ A literal here lands in the function's environment in plaintext and
+        # is visible to anyone with lambda:GetFunctionConfiguration.
+        TOKEN_SOURCE="⚠️  a LITERAL fine-grained token — prefer ssm: (scripts/set-dashboard-token.sh)" ;;
+  ghp_*)
+        echo "✗ that is a CLASSIC token. A read-only status page must not hold one." >&2
+        echo "  Run scripts/set-dashboard-token.sh, which refuses anything that can write." >&2
+        exit 1 ;;
+  '')   TOKEN_SOURCE="no credential — public repo + conditional requests, capped at 60/hour" ;;
+  *)    TOKEN_SOURCE="token supplied (unrecognised prefix)" ;;
+esac
 
 # ── 3. Infrastructure ────────────────────────────────────────────────────────
 # ⚠️ Parameters go in a FILE, never on the command line. An argument lands in
@@ -185,6 +205,66 @@ for i in $(seq 1 24); do
                      echo "  want $WANT" >&2; echo "  got  ${GOT:-<unfetchable>}" >&2; exit 1; }
   sleep 10
 done
+
+# ── 7. Prove the credential ARRIVED and WORKS ────────────────────────────────
+# ⛔ THIS STEP EXISTS BECAUSE EVERY OTHER SIGNAL IS SILENT.
+#
+# The template defaults `GitHubToken` to '', so a deploy that omitted it left
+# GITHUB_TOKEN="" and the dashboard read GitHub anonymously at 60/hour -- while
+# reporting UPDATE_COMPLETE. And the function's own logs do not help: the
+# resolver logs only on FAILURE, and the no-token path returns without logging
+# at all, so a correctly wired token and an empty one produce byte-identical
+# logs. "No error in the log" is not evidence.
+#
+# So ask the other side. `X-RateLimit-Limit` is 60 anonymous against 5000
+# authenticated, GitHub asserts it on every response, and the API now surfaces
+# it as run.budget. Invoking the function reads the state the browser would get.
+echo "── proving the GitHub credential"
+EV="$WORK/probe.json"; RESP="$WORK/probe-out.json"
+printf '{"path":"/api/state","httpMethod":"GET"}' > "$EV"
+aws lambda invoke --function-name "$(aws cloudformation describe-stack-resource \
+      --stack-name "$STACK" --region "$REGION" --logical-resource-id ApiFunction \
+      --query 'StackResourceDetail.PhysicalResourceId' --output text)" \
+  --region "$REGION" --payload "fileb://$EV" --cli-read-timeout 60 \
+  "$RESP" --query 'StatusCode' --output text >/dev/null
+
+# ⚠️ Read the BUDGET, not the status code. A 200 carrying an anonymous budget is
+# exactly the outcome this is here to catch.
+BUDGET=$(python3 - "$RESP" <<'PY2'
+import json, sys
+try:
+    outer = json.load(open(sys.argv[1]))
+    body = json.loads(outer.get("body") or "{}")
+    b = (body.get("run") or {}).get("budget")
+except Exception as e:
+    print("unreadable:%s" % e); raise SystemExit(0)
+if not b:
+    # GitHub was never reached on this invocation -- no headers, so nothing to
+    # report either way. Not a pass and not a failure.
+    print("unknown")
+else:
+    print("%s:%d:%d" % ("authed" if b.get("authed") else "anon",
+                        b.get("limit", 0), b.get("remaining", 0)))
+PY2
+)
+
+case "$BUDGET" in
+  authed:*)
+    echo "  ✓ GitHub saw a credential — limit $(echo "$BUDGET" | cut -d: -f2)/hour, $(echo "$BUDGET" | cut -d: -f3) left" ;;
+  anon:*)
+    if [ -n "$TOKEN" ]; then
+      echo "✗ a credential was configured but GitHub read this as ANONYMOUS" >&2
+      echo "  limit $(echo "$BUDGET" | cut -d: -f2)/hour. The token did not reach the function," >&2
+      echo "  or did not resolve. Check the function log for 'anonymous', and that the" >&2
+      echo "  execution role can ssm:GetParameter + kms:Decrypt on $TOKEN_PARAM." >&2
+      exit 1
+    fi
+    echo "  ⚠️  anonymous, $(echo "$BUDGET" | cut -d: -f3) of $(echo "$BUDGET" | cut -d: -f2) reads left this hour (no credential configured)" ;;
+  unknown)
+    echo "  ⚠️  GitHub was not reached on this probe — budget unknown, not proven either way" ;;
+  *)
+    echo "  ⚠️  could not read the probe response ($BUDGET)" ;;
+esac
 
 cat <<EOS
 

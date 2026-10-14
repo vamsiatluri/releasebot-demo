@@ -1361,6 +1361,30 @@ function showGate(msg){
 
 
 // ── What is IN this release ──────────────────────────────────────────────────
+// ⛔ WHICH CREDENTIAL GITHUB ACTUALLY SAW -- reported by GitHub, not by us.
+//
+// This is on screen because nothing else showed it. The deploy defaulted the
+// token parameter to empty, so a green deploy left the dashboard reading
+// anonymously at 60/hour; the function logs the resolver only on failure and
+// logs nothing at all when there is no token, so the wired and unwired cases
+// were indistinguishable. `X-RateLimit-Limit` is 60 anonymous against 5000
+// authenticated, sent on every response including a 304 -- so this is the one
+// place the question "is the token working?" has a first-hand answer.
+//
+// Shown only when it is worth knowing: anonymous ALWAYS, because that is the
+// state that degrades and the operator should see the budget draining;
+// authenticated only once it is materially used, so a healthy page is not
+// cluttered by a number nobody needs.
+function budgetNote(b){
+  if (!b || !b.limit) return "";
+  if (b.authed) {
+    if (b.remaining > b.limit * 0.5) return "";
+    return ` · <span title="authenticated reads, 5000/hour">github ${b.remaining}/${b.limit} left this hour</span>`;
+  }
+  const low = b.remaining <= 10 ? ' style="color:var(--blocking)"' : "";
+  return ` · <span${low} title="No credential: anonymous GitHub reads are capped at ${b.limit}/hour per egress IP, and a Lambda's egress is a shared NAT address. A zero-permission token lifts this to 5000/hour.">anonymous github — ${b.remaining}/${b.limit} reads left this hour</span>`;
+}
+
 function renderChange(ch){
   if (!ch || ch.error) return "";
   const tickets = (ch.issues || []).length
@@ -1945,12 +1969,12 @@ function renderRun(run){
   startAgeTicker();
 
   title.textContent = "Run #" + run.number + " · " + (run.title || run.commit);
-  // ⚠️ SAY HOW OLD THIS IS. The panel reads GitHub with NO credential, so the
-  // server refreshes it at most once every 120s (anonymous reads are capped at
-  // 60/hour per egress IP). That is a deliberate trade, but without the age on
-  // screen a two-minute-old reading is indistinguishable from a stuck pipeline
-  // -- which is exactly how it was first reported: "it is not moving after I
-  // approved". It had moved; the panel had not yet re-read.
+  // ⚠️ SAY HOW OLD THIS IS. Without a credential the server refreshes this at
+  // most once every 120s (anonymous GitHub reads are capped at 60/hour per
+  // egress IP); with one it refreshes every 10s. That is a deliberate trade,
+  // but without the age on screen a two-minute-old reading is indistinguishable
+  // from a stuck pipeline -- which is exactly how it was first reported: "it is
+  // not moving after I approved". It had moved; the panel had not yet re-read.
   meta.innerHTML =
     esc(run.commit) + " · " + esc(run.actor || "") + " · " +
     esc(run.conclusion || run.status) +
@@ -1959,6 +1983,7 @@ function renderRun(run){
     // outage when the real answer was a 60/hour anonymous rate limit on a
     // shared egress IP, which recovers on its own.
     (run.stale ? ` · <span title="${esc(run.staleReason || "")}">cached — ${esc(run.staleReason || "GitHub unreachable just now")}</span>` : "") +
+    budgetNote(run.budget) +
     (run.url ? ` · <a href="${esc(run.url)}" target="_blank" rel="noopener">on GitHub</a>` : "");
   document.getElementById("live").classList.toggle("on", !run.stale);
 

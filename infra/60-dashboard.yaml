@@ -109,6 +109,42 @@ Resources:
         # with an error naming CreateNetworkInterface but not the policy.
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
       Policies:
+        # ── The dashboard's own GitHub token, and NOTHING else ──────────────
+        #
+        # ⛔ SCOPED TO ONE PARAMETER NAME, deliberately, and this is the whole
+        # design rather than an optimisation.
+        #
+        # The obvious shortcut is to reuse the token the release functions
+        # already hold. That token has `Contents: Read and write` -- it can push
+        # to the repository -- and this page is the one component with a public
+        # CloudFront front door. Granting it `/releasebot/*/secrets/*` would let
+        # a compromised status page push code.
+        #
+        # So the grant names the ONE parameter. Even if somebody later points
+        # RELEASEBOT_DASHBOARD_TOKEN at the write token, IAM refuses the read:
+        # the policy enforces the intent instead of relying on whoever edits the
+        # parameter next remembering why it mattered.
+        #
+        # ⚠️ The dashboard had NO ssm or kms permission at all before this, so
+        # an `ssm:` reference would have silently fallen back to anonymous reads
+        # -- working, slower, and for a reason nothing would have explained.
+        - PolicyName: read-its-own-github-token
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [ssm:GetParameter]
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/releasebot/prod/secrets/dashboard-github-token'
+              # ⛔ ViaService must name SSM: a SecureString decrypt goes via ssm,
+              # not secretsmanager, and the wrong condition fails with an
+              # AccessDenied that blames KMS.
+              - Effect: Allow
+                Action: [kms:Decrypt]
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub 'ssm.${AWS::Region}.amazonaws.com'
         - PolicyName: read-release-functions
           PolicyDocument:
             Version: '2012-10-17'
