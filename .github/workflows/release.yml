@@ -86,6 +86,14 @@ on:
       # becomes noisy, add it; do not add anything whose change could alter what
       # gets deployed.
   workflow_dispatch:
+    inputs:
+      target:
+        description: 'Which account to release into'
+        type: choice
+        options:
+          - prod-demo
+          - prod-assess
+        default: prod-demo
 
 # ⚠️ A run held at the approval gate SURVIVES the next push, and then sits there
 # offering to deploy code that production has already moved past. That happened:
@@ -95,8 +103,14 @@ on:
 # Newer runs therefore cancel older ones of this workflow, INCLUDING one parked
 # at the gate. The queue is the thing that must not accumulate: two pending
 # approvals is how a gate stops being read and starts being clicked through.
+# ⚠️ THE GROUP INCLUDES THE TARGET ACCOUNT, and that is not a detail. Without it
+# a prod-assess release would CANCEL a prod-demo release parked at the gate, and
+# vice versa -- two unrelated environments superseding each other's approvals for
+# no reason, which is indistinguishable from the gate being broken. Superseding
+# is correct WITHIN one account's stream (that is what stops two pending
+# approvals accumulating); it is wrong ACROSS accounts.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.ref }}-${{ inputs.target || 'prod-demo' }}
   cancel-in-progress: true
 
 permissions:
@@ -109,6 +123,40 @@ env:
   AWS_REGION: us-east-1
 
 jobs:
+
+  # ── Which account is this release for? ──────────────────────────────────────
+  #
+  # ⛔ RESOLVED ONCE, HERE, AND NOWHERE ELSE. Two accounts run this bot and both
+  # post to the same Slack channel. The approval card's confirm dialog already
+  # said "Deploy to <account>?" -- and the workflow never set
+  # RELEASEBOT_ACCOUNT_LABEL, so every card in that channel has been reading
+  # "Deploy to `unlabelled`?". The mechanism existed and was never fed, which is
+  # worse than not having it: the reader sees a field that looks authoritative.
+  #
+  # A push (rather than a dispatch) carries no input, so it targets prod-demo --
+  # the account the pipeline has always deployed to. Releasing into prod-assess
+  # is a deliberate choice somebody makes in the Run-workflow dialog.
+  target:
+    name: 0 · Which account
+    runs-on: ubuntu-latest
+    outputs:
+      label:   ${{ steps.pick.outputs.label }}
+      health:  ${{ steps.pick.outputs.health }}
+    steps:
+      - id: pick
+        env:
+          WANT: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          LABEL="${WANT:-prod-demo}"
+          case "$LABEL" in
+            prod-demo)   HEALTH='https://0aohv0kx5k.execute-api.us-east-1.amazonaws.com/prod/beta/health' ;;
+            prod-assess) HEALTH='https://u4f22c74mi.execute-api.us-east-1.amazonaws.com/prod/beta/health' ;;
+            *) echo "::error::unknown target '$LABEL'"; exit 1 ;;
+          esac
+          echo "label=$LABEL"   >> "$GITHUB_OUTPUT"
+          echo "health=$HEALTH" >> "$GITHUB_OUTPUT"
+          echo "releasing into $LABEL" >> "$GITHUB_STEP_SUMMARY"
 
   build:
     name: 1 · Build once — no AWS credentials
@@ -178,7 +226,7 @@ jobs:
 
   test:
     name: 2 · Deploy to test + verify the deployed bytes
-    needs: build
+    needs: [build, target]
     runs-on: ubuntu-latest
     environment: test
     outputs:
@@ -198,12 +246,43 @@ jobs:
       - name: Ask AWS for temporary credentials — OIDC, no stored key
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ needs.target.outputs.label == 'prod-assess' && secrets.AWS_DEPLOY_ROLE_ARN_ASSESS || secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: releasebot-test-${{ github.run_id }}
 
-      - name: Which AWS account did OIDC actually put us in?
-        run: aws sts get-caller-identity --query Account --output text
+      # ⛔ PROVE WE ARE IN THE ACCOUNT WE SAID WE WERE, BEFORE WRITING ANYTHING.
+      #
+      # GitHub's `a && b || c` is not a ternary. If `b` is EMPTY it is falsy, so
+      # the expression yields `c` -- meaning a missing AWS_DEPLOY_ROLE_ARN_ASSESS
+      # would silently assume the prod-demo role while every Slack message, the
+      # confirm dialog and the step summary all said prod-assess. A release into
+      # the wrong account, announced as the right one.
+      #
+      # ★ So ask the ACCOUNT WE ARE ACTUALLY IN what it calls itself, and require
+      # it to match what was asked for. The credentials come from STS and the
+      # label comes from a function living in whichever account those credentials
+      # reach -- so no secret being correct is what makes this pass. This is the
+      # check that does not depend on the secret being right.
+      #
+      # ⚠️ It reads RELEASEBOT_ACCOUNT_LABEL off the DEPLOYED function rather
+      # than the health endpoint: health is a public URL that answers the same
+      # whatever credentials we hold, so it could not have detected the
+      # fall-through at all.
+      - name: Prove the credentials landed in ${{ needs.target.outputs.label }}
+        env:
+          WANT: ${{ needs.target.outputs.label }}
+        run: |
+          set -uo pipefail
+          HERE=$(aws sts get-caller-identity --query Account --output text)
+          GOT=$(aws lambda get-function-configuration --function-name cutRelease \
+                  --query 'Environment.Variables.RELEASEBOT_ACCOUNT_LABEL' --output text 2>/dev/null)
+          echo "credentials are in account $HERE, which calls itself '$GOT'"
+          if [ "$GOT" != "$WANT" ]; then
+            echo "::error::asked to release into '$WANT' but these credentials reach account $HERE, labelled '$GOT'."
+            echo "::error::If you selected prod-assess, check AWS_DEPLOY_ROLE_ARN_ASSESS is set — an EMPTY secret falls back to the prod-demo role."
+            exit 1
+          fi
+          echo "✓ $WANT = account $HERE, confirmed by the account itself" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Stage the artifact in S3 (a handoff, not a trigger)
         run: |
@@ -250,7 +329,7 @@ jobs:
   # saying where to make it only moves the question.
   notify-gate:
     name: 3 · Tell Slack the gate is open
-    needs: [build, test]
+    needs: [build, test, target]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -288,6 +367,12 @@ jobs:
       - name: Tell Slack an approval is waiting
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # ⛔ The card's confirm dialog has always said "Deploy to <account>?"
+          # and this was never set, so every card in the channel read
+          # "Deploy to `unlabelled`?" — a field that looks authoritative and
+          # names nothing. With two accounts posting to one channel that is the
+          # ambiguity the dialog exists to remove.
+          RELEASEBOT_ACCOUNT_LABEL: ${{ needs.target.outputs.label }}
           SUPERSEDED: ${{ steps.superseded.outputs.runs }}
         run: |
           bash scripts/ci-slack-notify.sh awaiting \
@@ -313,7 +398,7 @@ jobs:
 
   prod:
     name: 4 · Promote the SAME artifact to production
-    needs: [build, test]
+    needs: [build, test, target]
     runs-on: ubuntu-latest
     # ⏸ THE GATE.
     #
@@ -360,7 +445,7 @@ jobs:
       # trusting the deploy call.
       - name: Refuse to promote a commit that is BEHIND production
         env:
-          PROD_HEALTH_URL: https://0aohv0kx5k.execute-api.us-east-1.amazonaws.com/prod/beta/health
+          PROD_HEALTH_URL: ${{ needs.target.outputs.health }}
           SHA: ${{ needs.build.outputs.sha }}
         run: |
           set -uo pipefail
@@ -401,9 +486,44 @@ jobs:
       - name: Ask AWS for temporary credentials — OIDC, no stored key
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ needs.target.outputs.label == 'prod-assess' && secrets.AWS_DEPLOY_ROLE_ARN_ASSESS || secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: releasebot-prod-${{ github.run_id }}
+
+      # ⛔ PROVE WE ARE IN THE ACCOUNT WE SAID WE WERE, BEFORE WRITING ANYTHING.
+      #
+      # GitHub's `a && b || c` is not a ternary. If `b` is EMPTY it is falsy, so
+      # the expression yields `c` -- meaning a missing AWS_DEPLOY_ROLE_ARN_ASSESS
+      # would silently assume the prod-demo role while every Slack message, the
+      # confirm dialog and the step summary all said prod-assess. A release into
+      # the wrong account, announced as the right one.
+      #
+      # ★ So ask the ACCOUNT WE ARE ACTUALLY IN what it calls itself, and require
+      # it to match what was asked for. The credentials come from STS and the
+      # label comes from a function living in whichever account those credentials
+      # reach -- so no secret being correct is what makes this pass. This is the
+      # check that does not depend on the secret being right.
+      #
+      # ⚠️ It reads RELEASEBOT_ACCOUNT_LABEL off the DEPLOYED function rather
+      # than the health endpoint: health is a public URL that answers the same
+      # whatever credentials we hold, so it could not have detected the
+      # fall-through at all.
+      - name: Prove the credentials landed in ${{ needs.target.outputs.label }}
+        env:
+          WANT: ${{ needs.target.outputs.label }}
+        run: |
+          set -uo pipefail
+          HERE=$(aws sts get-caller-identity --query Account --output text)
+          GOT=$(aws lambda get-function-configuration --function-name cutRelease \
+                  --query 'Environment.Variables.RELEASEBOT_ACCOUNT_LABEL' --output text 2>/dev/null)
+          echo "credentials are in account $HERE, which calls itself '$GOT'"
+          if [ "$GOT" != "$WANT" ]; then
+            echo "::error::asked to release into '$WANT' but these credentials reach account $HERE, labelled '$GOT'."
+            echo "::error::If you selected prod-assess, check AWS_DEPLOY_ROLE_ARN_ASSESS is set — an EMPTY secret falls back to the prod-demo role."
+            exit 1
+          fi
+          echo "✓ $WANT = account $HERE, confirmed by the account itself" >> "$GITHUB_STEP_SUMMARY"
+
 
       - name: Promote — same bytes, no build step anywhere in this job
         # Note what is absent: no build step. The bytes came from the build job's
@@ -439,7 +559,13 @@ jobs:
       - name: Tell Slack what shipped
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          PROD_HEALTH_URL: https://0aohv0kx5k.execute-api.us-east-1.amazonaws.com/prod/beta/health
+          # ⛔ The card's confirm dialog has always said "Deploy to <account>?"
+          # and this was never set, so every card in the channel read
+          # "Deploy to `unlabelled`?" — a field that looks authoritative and
+          # names nothing. With two accounts posting to one channel that is the
+          # ambiguity the dialog exists to remove.
+          RELEASEBOT_ACCOUNT_LABEL: ${{ needs.target.outputs.label }}
+          PROD_HEALTH_URL: ${{ needs.target.outputs.health }}
         run: |
           bash scripts/ci-slack-notify.sh promoted \
             "${{ needs.build.outputs.sha }}" \
@@ -468,7 +594,7 @@ jobs:
   # is the same failure mode as an alarm that cannot fire.
   notify-failure:
     name: Report a failed release
-    needs: [build, test, notify-gate, prod]
+    needs: [build, test, notify-gate, prod, target]
     # ⚠️ 'failure' ONLY. A CANCELLED run has result 'cancelled', so this never
     # fired for one -- and it could not have reported it anyway, because a job
     # in the cancelled run's own workflow is cancelled along with it. That is
@@ -487,6 +613,12 @@ jobs:
       - name: Tell Slack the release failed
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # ⛔ The card's confirm dialog has always said "Deploy to <account>?"
+          # and this was never set, so every card in the channel read
+          # "Deploy to `unlabelled`?" — a field that looks authoritative and
+          # names nothing. With two accounts posting to one channel that is the
+          # ambiguity the dialog exists to remove.
+          RELEASEBOT_ACCOUNT_LABEL: ${{ needs.target.outputs.label }}
         run: |
           bash scripts/ci-slack-notify.sh failed \
             "${{ needs.build.outputs.sha || github.sha }}" \

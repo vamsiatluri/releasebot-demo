@@ -41,7 +41,25 @@ PROD_HEALTH="${PROD_HEALTH_URL:-}"
 # ⚠️ "unlabelled" rather than a guess. A message that silently claims the wrong
 # account is worse than one that admits it does not know.
 ACCOUNT="${RELEASEBOT_ACCOUNT_LABEL:-unlabelled}"
-BADGE="\`${ACCOUNT}\`"
+
+# ⛔ MAKE THE TWO ACCOUNTS LOOK DIFFERENT, not just read differently.
+#
+# Both environments post to the SAME channel, and the cards are otherwise
+# identical: same bot, same wording, same buttons, same run numbers from the same
+# repository. A reader scrolling a channel is pattern-matching on shape, not
+# reading a code-formatted word in the third line -- so the label alone is a
+# difference you have to go looking for.
+#
+# A leading emoji is the cheapest thing that survives a glance, a phone
+# notification, and a screenshot in a ticket. `unlabelled` gets a warning mark
+# precisely because it must never look like a normal, healthy card.
+case "$ACCOUNT" in
+  prod-demo)   MARK="🟦" ;;
+  prod-assess) MARK="🟪" ;;
+  unlabelled)  MARK="⚠️" ;;
+  *)           MARK="⬜" ;;
+esac
+BADGE="${MARK} \`${ACCOUNT}\`"
 
 case "$STATUS" in
   awaiting)
