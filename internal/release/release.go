@@ -77,6 +77,22 @@ type Service struct {
 	Properties string // JSON repo->brand map, from Parameter Store
 	DryRun     bool   // recorded on the row; a row that hides it is a lie
 
+	// ⛔ WHICH BUILD OF RELEASEBOT DID THIS, and why there is no Actions run
+	// number here.
+	//
+	// A ledger row records what the BOT did -- cut a branch, opened a
+	// mergeback -- triggered by a Slack command or a Jira transition. GitHub
+	// Actions run numbers belong to the pipeline that DEPLOYS the bot. They are
+	// two different pipelines, and stamping a run number on a row the pipeline
+	// never touched would be an invented fact.
+	//
+	// ★ What IS knowable, and is the traceability actually wanted: the Lambda
+	// VERSION that executed, and the COMMIT frozen into that binary. From the
+	// commit you can find the run that deployed it, which closes the loop
+	// honestly rather than by assertion.
+	BotVersion string // AWS_LAMBDA_FUNCTION_VERSION at execution
+	BotCommit  string // the commit stamped into the binary at build time
+
 	// Record is injected so the ledger is a dependency, not a hard-wired call.
 	// Nil means "do not record", which is what every unit test and the local
 	// harness want -- and what a function whose role lacks PutItem gets
@@ -237,6 +253,7 @@ func (s *Service) record(ctx context.Context, log *obs.Logger,
 		Property: ledger.Property(s.Properties, cmd.Repo),
 		Version:  cmd.Version, Branch: branch, SHA: sha,
 		Actor: cmd.Actor, ActorID: cmd.ActorID, Source: cmd.Source, URL: prURL, DryRun: s.DryRun,
+		BotVersion: s.BotVersion, BotCommit: s.BotCommit,
 	}
 
 	// What is IN this release? Asking GitHub for trunk..release-branch is the

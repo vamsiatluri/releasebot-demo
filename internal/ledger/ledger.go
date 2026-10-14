@@ -51,7 +51,11 @@ type Entry struct {
 	Commits  int      // how many commits this release carries
 	URL      string   // the PR, for a mergeback
 	DryRun   bool     // the sandbox runs dry; a row that hides that is a lie
-	At       time.Time
+	// Which build of ReleaseBot performed this. ⚠️ NOT an Actions run number --
+	// see release.Service.BotVersion for why that would be an invented fact.
+	BotVersion string
+	BotCommit  string
+	At         time.Time
 }
 
 // issueKey matches a Jira key: two or more uppercase alphanumerics, a hyphen,
@@ -121,19 +125,21 @@ func Put(ctx context.Context, e Entry) error {
 		// The partition is the ENVIRONMENT, which is also what each execution
 		// role's IAM condition pins. A test function physically cannot write a
 		// prod row.
-		"pk":      str("ENV#" + e.Env),
-		"sk":      str(e.At.Format(time.RFC3339Nano) + "#" + e.Repo + "#" + e.Action),
-		"action":  str(e.Action),
-		"repo":    str(e.Repo),
-		"version": str(e.Version),
-		"branch":  str(e.Branch),
-		"sha":     str(e.SHA),
-		"actor":   str(e.Actor),
-		"actorId": str(e.ActorID),
-		"source":  str(e.Source),
-		"at":      str(e.At.Format(time.RFC3339)),
-		"dryRun":  map[string]any{"BOOL": e.DryRun},
-		"commits": map[string]any{"N": fmt.Sprint(e.Commits)},
+		"pk":         str("ENV#" + e.Env),
+		"sk":         str(e.At.Format(time.RFC3339Nano) + "#" + e.Repo + "#" + e.Action),
+		"action":     str(e.Action),
+		"repo":       str(e.Repo),
+		"version":    str(e.Version),
+		"branch":     str(e.Branch),
+		"sha":        str(e.SHA),
+		"actor":      str(e.Actor),
+		"actorId":    str(e.ActorID),
+		"botVersion": str(e.BotVersion),
+		"botCommit":  str(e.BotCommit),
+		"source":     str(e.Source),
+		"at":         str(e.At.Format(time.RFC3339)),
+		"dryRun":     map[string]any{"BOOL": e.DryRun},
+		"commits":    map[string]any{"N": fmt.Sprint(e.Commits)},
 	}
 	if e.Property != "" {
 		item["property"] = str(e.Property)

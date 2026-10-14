@@ -1380,6 +1380,32 @@ function renderChange(ch){
 }
 
 // ── The release ledger ───────────────────────────────────────────────────────
+// Which BUILD of ReleaseBot performed a row.
+//
+// ⛔ NOT an Actions run number, and the difference matters. A ledger row records
+// what the BOT did -- cut a branch, opened a mergeback -- triggered from Slack
+// or Jira. Run numbers belong to the pipeline that DEPLOYS the bot. Printing a
+// run number here would attach an identifier from a pipeline that never touched
+// this row.
+//
+// ★ The commit IS the honest link: it is frozen into the binary that executed,
+// and it is the same commit the deploy pipeline shows a run number for. So the
+// row names the version and the commit, and the commit links out — from there
+// the run that deployed it is one click away, without anything being invented.
+function botCell(r){
+  if (!r.botVersion && !r.botCommit) {
+    // ⚠️ Rows written before this was recorded. Says so, rather than rendering
+    // an empty cell that reads as "nothing to see".
+    return `<span style="color:var(--muted)">not recorded</span>`;
+  }
+  const v = r.botVersion ? `v${esc(r.botVersion)}` : "";
+  const c = r.botCommit
+    ? `<a href="https://github.com/vamsiatluri/releasebot-demo/commit/${esc(r.botCommit)}"
+         target="_blank" rel="noopener">${esc(r.botCommit)}</a>`
+    : "";
+  return [v, c].filter(Boolean).join("<br>");
+}
+
 function renderReleases(rows){
   const el = document.getElementById("rel-body");
   if (!rows || !rows.length){
@@ -1390,7 +1416,7 @@ function renderReleases(rows){
   el.innerHTML = `<div style="overflow-x:auto"><table class="rel">
     <thead><tr>
       <th>Property</th><th>Release</th><th>What</th><th>Tickets</th>
-      <th>Who</th><th>When</th>
+      <th>Who</th><th>Shipped by</th><th>When</th>
     </tr></thead><tbody>` +
     rows.map(r => {
       const tix = (r.issues || []).length
@@ -1408,6 +1434,7 @@ function renderReleases(rows){
             ${r.url ? `<br><a href="${esc(r.url)}" target="_blank" rel="noopener">PR</a>` : ""}</td>
         <td>${tix}</td>
         <td>${esc(r.actor || "—")}<br><span class="tag">${esc(r.source || "?")}</span></td>
+        <td class="mono" style="white-space:nowrap">${botCell(r)}</td>
         <td class="mono" style="white-space:nowrap">${esc((r.at || "").replace("T"," ").slice(0,16))}</td>
       </tr>`;
     }).join("") + `</tbody></table></div>`;
@@ -1928,7 +1955,10 @@ function renderRun(run){
     esc(run.commit) + " · " + esc(run.actor || "") + " · " +
     esc(run.conclusion || run.status) +
     (run.readAt ? ` · <span id="lp-age" data-at="${esc(run.readAt)}">read just now</span>` : "") +
-    (run.stale ? " · cached (GitHub unreachable just now)" : "") +
+    // ⚠️ Say WHY it is stale. "unreachable" sent a reader looking for an
+    // outage when the real answer was a 60/hour anonymous rate limit on a
+    // shared egress IP, which recovers on its own.
+    (run.stale ? ` · <span title="${esc(run.staleReason || "")}">cached — ${esc(run.staleReason || "GitHub unreachable just now")}</span>` : "") +
     (run.url ? ` · <a href="${esc(run.url)}" target="_blank" rel="noopener">on GitHub</a>` : "");
   document.getElementById("live").classList.toggle("on", !run.stale);
 

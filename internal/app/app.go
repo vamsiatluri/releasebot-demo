@@ -9,6 +9,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/vamsiatluri/releasebot-migration/internal/config"
 	"github.com/vamsiatluri/releasebot-migration/internal/githubclient"
@@ -63,6 +64,11 @@ func Build(ctx context.Context, action handler.Action, alias string, ackOnly boo
 
 	svc := release.NewService(gh, log, cfg.DefaultBranch)
 	svc.Env, svc.Properties, svc.DryRun = cfg.Env, cfg.Properties, cfg.DryRun
+	// Which build is about to perform the work, recorded on every ledger row.
+	// ⚠️ AWS_LAMBDA_FUNCTION_VERSION is "$LATEST" for an unqualified invoke and
+	// a number behind an alias -- both are the truth about what ran, so neither
+	// is normalised away.
+	svc.BotVersion, svc.BotCommit = os.Getenv("AWS_LAMBDA_FUNCTION_VERSION"), handler.BuildCommit
 	// The ledger is injected, not imported into the service. A unit test, the
 	// local harness, and a function whose role lacks PutItem all run with it
 	// nil -- and a nil recorder is a no-op, never a failed release.

@@ -22,6 +22,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -111,7 +112,13 @@ type runState struct {
 	Change     *changeset `json:"change,omitempty"`
 	ReadAt     string     `json:"readAt"`
 	Stale      bool       `json:"stale,omitempty"`
-	Error      string     `json:"error,omitempty"`
+	// ⚠️ WHY it is stale. Without this the UI said only "GitHub unreachable",
+	// because the stale path copied the last-good value and DROPPED the fresh
+	// error -- so the one piece of information that distinguishes "we are rate
+	// limited, it will recover" from "something is broken" was discarded at
+	// exactly the moment it was needed.
+	StaleReason string `json:"staleReason,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
 // One published version, and whether it is actually reachable as a rollback
@@ -148,6 +155,12 @@ type release struct {
 	Commits  int      `json:"commits"`
 	URL      string   `json:"url"`
 	DryRun   bool     `json:"dryRun"`
+	// Which build of ReleaseBot performed this. ⚠️ NOT an Actions run number --
+	// the ledger records what the BOT did (Slack/Jira-triggered), and run
+	// numbers belong to the pipeline that DEPLOYS the bot. The commit is the
+	// honest link between the two: from it you can find the run.
+	BotVersion string `json:"botVersion,omitempty"`
+	BotCommit  string `json:"botCommit,omitempty"`
 }
 
 // What is in THIS pipeline run, relative to the last one that reached
@@ -519,7 +532,7 @@ func cachedRun(ctx context.Context) *runState {
 	}
 	if fresh.Error != "" && runCache.val != nil && runCache.val.Error == "" {
 		stale := *runCache.val
-		stale.Stale = true
+		stale.Stale, stale.StaleReason = true, fresh.Error
 		return &stale
 	}
 	fresh.ReadAt = time.Now().UTC().Format(time.RFC3339)
@@ -576,8 +589,19 @@ func readRun(ctx context.Context) *runState {
 			// Never echo the body: a GitHub error names the repo and the token's
 			// owner. Rate limiting is called out by name because "403" on its own
 			// sends people looking for a permissions problem that is not there.
-			if resp.StatusCode == 403 && resp.Header.Get("X-RateLimit-Remaining") == "0" {
-				return fmt.Errorf("github rate limit reached")
+			if (resp.StatusCode == 403 || resp.StatusCode == 429) &&
+				resp.Header.Get("X-RateLimit-Remaining") == "0" {
+				// ⚠️ Anonymous reads are 60/hour PER EGRESS IP, and a Lambda's
+				// egress is a shared NAT address -- so this is reachable during
+				// an ordinary busy afternoon, not only under abuse. Naming the
+				// reset turns "it is broken" into "it is back in 12 minutes".
+				mins := ""
+				if ts, err := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64); err == nil {
+					if d := time.Until(time.Unix(ts, 0)); d > 0 {
+						mins = fmt.Sprintf(", resets in %dm", int(d.Minutes())+1)
+					}
+				}
+				return fmt.Errorf("github rate limit reached (60/hour unauthenticated, shared egress IP)%s", mins)
 			}
 			return fmt.Errorf("github returned %d", resp.StatusCode)
 		}
@@ -865,7 +889,9 @@ func readLedger(ctx context.Context) []release {
 				Version: it["version"].S, Branch: it["branch"].S,
 				Actor: it["actor"].S, Source: it["source"].S,
 				Issues: it["issues"].SS, URL: it["url"].S,
-				DryRun: it["dryRun"].BOOL,
+				DryRun:     it["dryRun"].BOOL,
+				BotVersion: it["botVersion"].S,
+				BotCommit:  it["botCommit"].S,
 			}
 			fmt.Sscanf(it["commits"].N, "%d", &r.Commits)
 			all = append(all, r)
