@@ -112,7 +112,26 @@
                   font-size:11px; color:var(--muted); padding-top:1px}
   .lane-steps .nm{flex:1; color:var(--ink-2); min-width:0; overflow-wrap:anywhere}
   .lane-steps .sec{flex:0 0 auto; font-family:var(--mono); font-size:10.5px;
-                   color:var(--muted); font-variant-numeric:tabular-nums}
+                   color:var(--muted); font-variant-numeric:tabular-nums;
+                   text-align:right; min-width:52px}
+  /* Why the step exists. Smaller and quieter than the step name: it is there
+     to be read on the one step you are curious about, not to compete with the
+     list you are scanning. */
+  .lane-steps .why{display:block; margin-top:3px; font-size:11px; line-height:1.45;
+                   color:var(--muted)}
+  .lane-steps .why code{font-family:var(--mono); font-size:10px;
+                        background:var(--ground); padding:0 3px; border-radius:3px}
+  /* Scaled to the slowest step in THIS job, so the critical path is visible at
+     a glance rather than computed by reading nine numbers. */
+  .lane-steps .bar{display:block; height:3px; margin-top:4px; border-radius:2px;
+                   background:var(--rule); overflow:hidden}
+  .lane-steps .bar i{display:block; height:100%; background:var(--muted)}
+  .lane-steps li.done .bar i{background:var(--clear)}
+  .lane-steps li.run  .bar i{background:var(--signal)}
+  .lane-steps li.fail .bar i{background:var(--blocking)}
+  .lane-log{font-family:var(--mono); font-size:10px; letter-spacing:.06em;
+            text-transform:uppercase; color:var(--signal); text-decoration:none}
+  .lane-log:hover{text-decoration:underline}
   .lane-steps li.run .nm{color:var(--ink); font-weight:600}
   .lane-steps li.run .gl, .lane-steps li.run .sec{color:var(--signal)}
   .lane-steps li.done .gl{color:var(--clear)}
@@ -1685,6 +1704,44 @@ function secs(n){
   return n < 60 ? n + "s" : Math.floor(n/60) + "m " + String(n%60).padStart(2,"0") + "s";
 }
 
+// ── What each step PROVES ───────────────────────────────────────────────────
+//
+// The step NAMES say what ran. These say why it is there and what would be
+// true if it were missing -- which is the question anyone watching a pipeline
+// actually has, and the one a step name has no room for.
+//
+// ⚠️ Matched on a SUBSTRING, like the lanes, and an unmatched step simply gets
+// no note. A renamed step must degrade to "no explanation", never to a wrong
+// one, and never to a broken render.
+const STEP_NOTES = [
+  ["unit tests",        "Pure functions, no AWS, no network. Catches the errors that do not need a deployment to find."],
+  ["vet",               "Finds what compiles and is still wrong — an unused result, a format string that cannot hold its argument."],
+  ["fake slack",        "The whole behaviour suite against local stand-ins. Free, credential-free, and it runs before anything is built — so a broken contract never reaches an account."],
+  ["package both",      "linux/amd64 and <code>bootstrap</code> at the zip ROOT. Either wrong and INIT fails with \"exec format error\" or \"no valid bootstrap\", neither of which names the real cause."],
+  ["resolve the commit","Stamped into the binary, so the deployed function can be asked which commit it is rather than inferred from a deploy log."],
+  ["fingerprint",       "The sha256 of each zip. ★ This is the number the deploy is checked against afterwards — without it, \"deployed\" is a claim rather than a measurement."],
+  ["record the artifact","Written to the run page so the identity survives the job that produced it."],
+
+  ["fetch the artifact","⛔ Downloads what the build job made. It does NOT rebuild — a second build of the same commit can differ, and then test and production are not running the same bytes."],
+  ["temporary credentials","OIDC: GitHub proves who it is, AWS issues short-lived keys. There is no long-lived access key anywhere in this repository or its secrets."],
+  ["which aws account", "★ Asks AWS who it actually became. A trust policy that matches the wrong subject puts you in no account, or the wrong one, and every later step then fails for reasons that look unrelated."],
+  ["stage the artifact","S3 is a HANDOFF here, not a trigger. Nothing watches the bucket; the next step names the key explicitly."],
+  ["deploy both test",  "Publish a version, then move the <code>live</code> alias. The alias is the deployment pointer — the version freezes code AND configuration."],
+  ["fingerprint back",  "★★ Reads the sha256 the <code>live</code> alias actually serves and compares it to the artifact. This is the step that catches a green deploy still running the old code."],
+  ["public url",        "Read from CloudFormation rather than hardcoded, because the API id changes when the API is recreated — which is the migration lesson in miniature."],
+  ["live test endpoint","★ THE GATE. The same suite, now against the real deployed endpoint with real signatures. Everything before this proves the code; only this proves the deployment."],
+  ["cloudwatch",        "Publishes the result as a metric so an alarm can watch the pipeline, not just a human."],
+
+  ["promote",           "The SAME artifact, by key. No build step exists in this job — there is nothing here that could produce different bytes."],
+  ["tell slack",        "Posts the approval request with the run number, the commit and the ACCOUNT, so a click cannot be about the wrong environment."],
+];
+
+function stepNote(name){
+  const n = (name || "").toLowerCase();
+  for (const [needle, note] of STEP_NOTES) if (n.includes(needle)) return note;
+  return "";
+}
+
 // GitHub prefixes every job with housekeeping steps. They are real, they just
 // are not the release -- hiding them keeps the four lanes to what a reviewer
 // is actually deciding about.
@@ -1807,23 +1864,52 @@ function renderRun(run){
       body = `<div class="lane-empty">${esc(PENDING[L.key])}</div>`;
     } else {
       const steps = (job.steps || []).filter(st => !NOISE.test(st.name || ""));
+      // ⚠️ The bar is scaled to the SLOWEST STEP IN THIS JOB, not to the job's
+      // total. Scaling to the total makes every bar a sliver and hides the one
+      // thing the bar is for: which step is the slow one.
+      const peak = Math.max(1, ...steps.map(st => st.seconds || 0));
       body = steps.length
         ? `<ul class="lane-steps">` + steps.map(st => {
             const [cls, glyph] = stepState(st);
-            return `<li class="${cls}"><span class="gl">${glyph}</span>` +
-                   `<span class="nm">${esc(st.name)}</span>` +
-                   `<span class="sec">${esc(secs(st.seconds))}</span></li>`;
+            const note = stepNote(st.name);
+            const pct  = Math.round(((st.seconds || 0) / peak) * 100);
+            return `<li class="${cls}">` +
+                   `<span class="gl">${glyph}</span>` +
+                   `<span class="nm">${esc(st.name)}` +
+                     (note ? `<span class="why">${note}</span>` : "") +
+                   `</span>` +
+                   `<span class="sec">${esc(secs(st.seconds))}` +
+                     (st.seconds ? `<span class="bar"><i style="width:${pct}%"></i></span>` : "") +
+                   `</span></li>`;
           }).join("") + `</ul>`
         : `<div class="lane-empty">starting…</div>`;
     }
 
     const [cls, label] = laneState(job);
     const t = job && job.seconds ? secs(job.seconds) : "";
+    // ⚠️ The slowest step, named. A job duration tells you the pipeline is slow;
+    // this tells you WHERE, which is the only version of that fact you can act
+    // on. Only worth saying when one step actually dominates.
+    let slow = "";
+    if (job && job.steps){
+      const real = job.steps.filter(st => !NOISE.test(st.name || "") && st.seconds);
+      if (real.length > 1){
+        const top = real.reduce((a,b) => (b.seconds > a.seconds ? b : a));
+        const total = real.reduce((n,st) => n + st.seconds, 0);
+        if (total && top.seconds / total >= 0.35){
+          slow = `<div class="lane-s"><span>slowest</span>` +
+                 `<span>${esc(top.name.split("—")[0].trim().slice(0,28))} · ${esc(secs(top.seconds))}</span></div>`;
+        }
+      }
+    }
+    const logLink = job && job.url
+      ? `<a class="lane-log" href="${esc(job.url)}" target="_blank" rel="noopener">log ↗</a>` : "";
     return `<div class="lane ${cls}">
       <div class="lane-h">
-        <div class="lane-n">${esc(L.n)}</div>
+        <div class="lane-n">${esc(L.n)}${logLink ? " · " + logLink : ""}</div>
         <div class="lane-t">${esc(L.t)}</div>
         <div class="lane-s"><span>${esc(label)}</span><span>${esc(t)}</span></div>
+        ${slow}
       </div>${body}</div>`;
   }).join("");
 
