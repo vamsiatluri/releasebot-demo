@@ -1,0 +1,54 @@
+# Backstage service-catalog entry.
+#
+# ⚠️ THIS IS A SAMPLE, and it is here to be read rather than applied. It is only
+# worth anything if the organisation ALREADY runs Backstage -- standing a portal
+# up is a platform programme, not a migration task, and proposing one inside a
+# fixed-scope migration is scope creep wearing a nice hat.
+#
+# ⛔ What it IS worth, if a catalog already exists: a catalog entry is a record
+# that asserts who owns a thing and what it is attached to. A migration is
+# exactly the event that makes such a record wrong -- the account changes, the
+# URL changes, the runbook moves -- and nothing fails when it goes stale. That is
+# the same defect this whole project is about, in a different system.
+#
+# ⚠️ The `spec.owner` and `spec.system` values below are placeholders. A catalog
+# entry naming an owner who has left, or a team that was reorganised, is worse
+# than no entry: it sends the next incident to a group that will not answer.
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: releasebot
+  title: ReleaseBot
+  description: >
+    Cuts release branches and opens mergeback pull requests, driven by Slack
+    slash commands and Jira transitions. Four Go Lambdas on a custom runtime
+    behind one API Gateway with prod and test stages.
+  annotations:
+    # Links the entity to its repository — drives the GitHub Actions and
+    # pull-request plugins if those are installed.
+    github.com/project-slug: msnbc/releasebot
+    # Renders the repo's own markdown as the component's documentation. The
+    # docs that matter here already exist: RUNBOOK, CUTOVER, MIGRATION-PLAN,
+    # WHAT-BROKE. Docs-as-code means the cutover updates them in the same PR
+    # that performs it, rather than in a wiki nobody edits afterwards.
+    backstage.io/techdocs-ref: dir:.
+  links:
+    - url: https://d1ktxi0tgqjqcx.cloudfront.net/
+      title: Release dashboard
+      icon: dashboard
+    - url: https://github.com/msnbc/releasebot/blob/main/docs/RUNBOOK.md
+      title: Runbook
+      icon: docs
+spec:
+  type: service
+  lifecycle: production
+  # ⚠️ A GROUP, never a person. Individual owners are how a catalog rots.
+  owner: group:news-group-digital-cloudops
+  system: release-automation
+  # What breaks if these break. This is the field a migration actually changes,
+  # and the reason the entry is worth keeping current.
+  dependsOn:
+    - resource:default/releasebot-ledger
+    - resource:default/releasebot-api
+  providesApis:
+    - releasebot-slack-commands
