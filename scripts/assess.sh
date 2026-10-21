@@ -107,6 +107,23 @@ go build -o "$BIN" ./cmd/baseline || die "could not build cmd/baseline"
 worst=0
 bump() { [ "$1" -gt "$worst" ] && worst="$1"; return 0; }
 
+# ── 0. Can we even read this account? ────────────────────────────────────────
+# ⛔ BEFORE THE CAPTURE, NOT DURING IT. `capture` dies on the first failure that
+# matters, and in an account you have never touched the likeliest outcome is not
+# success or failure but "eleven of the fourteen permissions, and nobody knows
+# which three are missing". An AccessDenied halfway through a capture reads like
+# a broken tool; the same denial named up front is a short list to hand the
+# platform team.
+note "0/4  can this role read the account?"
+"$BIN" preflight -profile "$PROFILE" -region "$REGION"
+PRE=$?
+# 2 = only the estate (Phase 7) reads are missing. The migration baseline is
+# still takeable, so carry on and let the capture record what it could not see.
+[ "$PRE" -le 2 ] || exit "$PRE"
+if [ "$PRE" = 2 ] && [ -n "$TEARDOWN" ]; then
+  die "--teardown needs the estate reads listed above; ask for them first"
+fi
+
 # ── 1. Read the source account ───────────────────────────────────────────────
 note "1/4  reading $LABEL"
 # --estate adds the eleven services a DECOMMISSION needs and a migration

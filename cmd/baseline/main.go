@@ -38,6 +38,8 @@ func main() {
 		generate(os.Args[2:])
 	case "teardown":
 		teardown(os.Args[2:])
+	case "preflight":
+		preflight(os.Args[2:])
 	default:
 		usage()
 	}
@@ -45,6 +47,12 @@ func main() {
 
 func usage() {
 	fmt.Fprint(os.Stderr, `baseline — read a running AWS account into something you can diff and review
+
+  preflight -profile P [-region R]
+            ⭐ RUN THIS FIRST in an account you do not own. Probes every read
+            the tool needs and names the IAM actions that are missing, instead
+            of dying halfway through a capture with an AccessDenied.
+            exit 0 all present · 1 a required read denied · 2 estate reads only.
 
   capture   -profile P [-region R] [-prefix S] -label L -out FILE
             Read the account. Never reads secret VALUES; records key names only.
@@ -218,4 +226,22 @@ func teardown(args []string) {
 	}
 	fmt.Printf("teardown plan -> %s (%d steps, %d resources no stack owns)\n",
 		*out, len(plan.Steps), len(plan.Unowned))
+}
+
+func preflight(args []string) {
+	fs := flagset("preflight")
+	profile := fs.String("profile", "", "AWS CLI profile")
+	region := fs.String("region", "us-east-1", "region")
+	verbose := fs.Bool("v", false, "print each AWS call")
+	_ = fs.Parse(args)
+
+	c := &baseline.Capturer{Profile: *profile, Region: *region, Verbose: *verbose}
+	// ⚠️ Read the account from the probe results rather than calling STS again:
+	// if sts itself is denied, asking twice just fails twice.
+	acct := "unknown"
+	var who struct{ Account string }
+	if err := c.AWS(&who, "sts", "get-caller-identity"); err == nil && who.Account != "" {
+		acct = who.Account
+	}
+	os.Exit(baseline.WritePreflight(os.Stdout, acct, *region, c.Preflight()))
 }

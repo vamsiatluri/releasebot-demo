@@ -482,3 +482,8 @@ func (c *Capturer) captureAlarms(b *Baseline, owners map[string]string) error {
 	}
 	return nil
 }
+
+// AWS is the exported form of aws(), for callers outside the package that need
+// one read before deciding what to do -- `preflight` wants the account id so it
+// can head its own report, without re-implementing profile and region handling.
+func (c *Capturer) AWS(out any, args ...string) error { return c.aws(out, args...) }
