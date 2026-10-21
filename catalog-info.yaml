@@ -1,19 +1,54 @@
-# Backstage service-catalog entry.
+# ReleaseBot, as the Backstage software catalog sees it.
 #
-# ⚠️ THIS IS A SAMPLE, and it is here to be read rather than applied. It is only
-# worth anything if the organisation ALREADY runs Backstage -- standing a portal
-# up is a platform programme, not a migration task, and proposing one inside a
-# fixed-scope migration is scope creep wearing a nice hat.
+# ⭐ THIS FILE LIVES IN THE SERVICE'S OWN REPO, NOT THE PORTAL'S. That is the
+# central idea of the catalog and the reason it has any chance of staying true:
+# the description of a system sits next to the system, changes in the same pull
+# request, and is reviewed by the people who changed the thing. A catalog
+# maintained inside the portal is a second copy of reality, and second copies rot.
 #
-# ⛔ What it IS worth, if a catalog already exists: a catalog entry is a record
-# that asserts who owns a thing and what it is attached to. A migration is
-# exactly the event that makes such a record wrong -- the account changes, the
-# URL changes, the runbook moves -- and nothing fails when it goes stale. That is
-# the same defect this whole project is about, in a different system.
+# ⚠️ AND IT STILL ROTS IF YOU LET IT. Nothing here is enforced. The account id
+# changes at cutover, the owning team gets reorganised, the runbook moves -- and
+# every one of those leaves an entry that is confidently wrong while looking
+# exactly as authoritative as a correct one. That is the same defect this whole
+# project is about, living in a different system. Treat the catalog entry as a
+# cutover artifact, on the checklist beside the runbook.
 #
-# ⚠️ The `spec.owner` and `spec.system` values below are placeholders. A catalog
-# entry naming an owner who has left, or a team that was reorganised, is worse
-# than no entry: it sends the next incident to a group that will not answer.
+# ─────────────────────────────────────────────────────────────────────────────
+# THE FIVE KINDS USED HERE, AND WHY EACH IS THAT KIND
+#
+#   Domain     a business area                        News Group Digital
+#   System     things that work together              release-automation
+#   Component  a piece of SOFTWARE somebody deploys   releasebot, the dashboard
+#   API        an INTERFACE a component exposes       the Slack + Jira endpoints
+#   Resource   INFRASTRUCTURE a component needs       the table, the API, the secrets
+#   Group      who gets paged                         cloudops
+#
+# ★ The distinction people get wrong is Component vs Resource. A Component is
+#   something your team WRITES and SHIPS. A Resource is something it CONSUMES.
+#   The four Lambdas are not four Components -- they are one deployable service
+#   in one repository owned by one team. Modelling each Lambda separately buys
+#   nothing and gives you four entities to keep current instead of one.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: backstage.io/v1alpha1
+kind: Domain
+metadata:
+  name: news-group-digital
+  description: Digital properties and the tooling that ships them.
+spec:
+  owner: group:default/cloudops
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: release-automation
+  description: >
+    How a release gets cut, approved and merged back. ReleaseBot plus the
+    surfaces people actually touch.
+spec:
+  owner: group:default/cloudops
+  domain: news-group-digital
+---
+# ── The service itself ───────────────────────────────────────────────────────
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
@@ -22,33 +57,193 @@ metadata:
   description: >
     Cuts release branches and opens mergeback pull requests, driven by Slack
     slash commands and Jira transitions. Four Go Lambdas on a custom runtime
-    behind one API Gateway with prod and test stages.
+    (two commands x live and test) behind one API Gateway with prod and test
+    stages.
   annotations:
-    # Links the entity to its repository — drives the GitHub Actions and
-    # pull-request plugins if those are installed.
-    github.com/project-slug: msnbc/releasebot
-    # Renders the repo's own markdown as the component's documentation. The
-    # docs that matter here already exist: RUNBOOK, CUTOVER, MIGRATION-PLAN,
-    # WHAT-BROKE. Docs-as-code means the cutover updates them in the same PR
-    # that performs it, rather than in a wiki nobody edits afterwards.
+    github.com/project-slug: vamsiatluri/releasebot-demo
+    # Renders this repo's markdown as the component's docs tab. The value of
+    # docs-as-code here is not the rendering -- it is that the cutover updates
+    # the runbook in the same PR that performs the cutover, instead of in a wiki
+    # nobody edits afterwards.
     backstage.io/techdocs-ref: dir:.
+  tags: [go, lambda, serverless, slack, release-automation]
   links:
     - url: https://d1ktxi0tgqjqcx.cloudfront.net/
-      title: Release dashboard
+      title: Release dashboard (prod-demo)
       icon: dashboard
-    - url: https://github.com/msnbc/releasebot/blob/main/docs/RUNBOOK.md
+    - url: https://github.com/vamsiatluri/releasebot-demo/blob/main/docs/RUNBOOK.md
       title: Runbook
+      icon: docs
+    - url: https://github.com/vamsiatluri/releasebot-demo/blob/main/docs/CUTOVER.md
+      title: Cutover runbook
       icon: docs
 spec:
   type: service
   lifecycle: production
-  # ⚠️ A GROUP, never a person. Individual owners are how a catalog rots.
-  owner: group:news-group-digital-cloudops
+  # ⛔ A GROUP, NEVER A PERSON. Individual owners are the single most common way
+  # a catalog goes stale: people change teams and nothing updates the entry, so
+  # the next incident pages someone who left.
+  owner: group:default/cloudops
   system: release-automation
-  # What breaks if these break. This is the field a migration actually changes,
-  # and the reason the entry is worth keeping current.
+  providesApis:
+    - releasebot-slack-commands
+    - releasebot-jira-webhook
+  # ★ THIS IS THE FIELD A MIGRATION CHANGES, and the reason the entry is worth
+  # keeping current at all. "What breaks if this breaks" is the question the
+  # catalog exists to answer, and it is the question whose answer moves when the
+  # system moves accounts.
   dependsOn:
     - resource:default/releasebot-ledger
     - resource:default/releasebot-api
-  providesApis:
-    - releasebot-slack-commands
+    - resource:default/releasebot-secrets
+---
+# ── What it exposes ──────────────────────────────────────────────────────────
+# ⚠️ An API entity is the CONTRACT, not the implementation. It exists so that a
+# consumer can depend on the interface rather than on the service -- which is
+# what lets the catalog answer "who breaks if I change this endpoint?"
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: releasebot-slack-commands
+  description: >
+    POST /beta/cut and POST /beta/merge. Slack slash commands, verified by HMAC
+    over the raw body and timestamp using the signing secret.
+spec:
+  type: openapi
+  lifecycle: production
+  owner: group:default/cloudops
+  system: release-automation
+  definition: |
+    openapi: 3.0.0
+    info:
+      title: ReleaseBot Slack commands
+      version: '1.0'
+    paths:
+      /beta/cut:
+        post:
+          summary: Cut a release branch
+          description: >
+            Slack slash command. Body is application/x-www-form-urlencoded and
+            MUST carry a valid X-Slack-Signature over the raw body plus
+            X-Slack-Request-Timestamp.
+          responses:
+            '200': {description: Acknowledged within 3s; work continues asynchronously}
+            '401': {description: Signature missing, stale, or wrong}
+      /beta/merge:
+        post:
+          summary: Open the mergeback pull request
+          responses:
+            '200': {description: Acknowledged}
+            '401': {description: Signature missing, stale, or wrong}
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: releasebot-jira-webhook
+  description: Inbound Jira transitions, verified by a shared secret.
+spec:
+  type: openapi
+  lifecycle: production
+  owner: group:default/cloudops
+  system: release-automation
+  definition: |
+    openapi: 3.0.0
+    info: {title: ReleaseBot Jira webhook, version: '1.0'}
+    paths:
+      /beta/jira:
+        post:
+          summary: Jira issue transition
+          responses:
+            '200': {description: Accepted}
+            '401': {description: Bad or missing signature}
+---
+# ── What it needs ────────────────────────────────────────────────────────────
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: releasebot-ledger
+  description: >
+    DynamoDB table. The audit record of every cut and mergeback, keyed on the
+    immutable Slack user id.
+  annotations:
+    # ⚠️ DeletionPolicy: Retain is CORRECT for an audit record and has a
+    # consequence worth writing down where somebody will read it: no stack
+    # delete ever removes this table, so a decommission leaves it behind and the
+    # orphan then blocks the next create of that stack.
+    releasebot.io/deletion-policy: Retain
+spec:
+  type: database
+  owner: group:default/cloudops
+  system: release-automation
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: releasebot-api
+  description: >
+    API Gateway REST API. ONE api, TWO stages -- a stage variable selects which
+    Lambda a route integrates with, so /prod/beta/cut and /test/beta/cut are the
+    same route pointed at different functions.
+  annotations:
+    # ⛔ The invoke URL contains the API id, and the API id is per-account. So
+    # this value CHANGES at cutover, and every Slack command, the interactivity
+    # URL and the Jira webhook change with it. An entry still naming the old id
+    # after cutover is the catalog's version of a stale runbook.
+    releasebot.io/invoke-url-contains-account-specific-api-id: 'true'
+spec:
+  type: api-gateway
+  owner: group:default/cloudops
+  system: release-automation
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: releasebot-secrets
+  description: >
+    SSM Parameter Store, SecureString under /releasebot/<stage>/secrets/. The
+    function's environment holds a REFERENCE, not a value, so
+    lambda:GetFunctionConfiguration returns a pointer rather than a credential.
+spec:
+  type: secret-store
+  owner: group:default/cloudops
+  system: release-automation
+---
+# ── The status page ──────────────────────────────────────────────────────────
+# A SECOND component, deliberately: different repo path, different deploy, its
+# own IAM role, and it can be broken while ReleaseBot is fine. "Would I want to
+# know if only this part were down?" is the test for whether something deserves
+# its own entity.
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: releasebot-dashboard
+  title: ReleaseBot dashboard
+  description: >
+    Read-only status page. Reads AWS directly and GitHub Actions with a
+    zero-permission token that buys rate limit and nothing else.
+  annotations:
+    github.com/project-slug: vamsiatluri/releasebot-demo
+  links:
+    - url: https://d1ktxi0tgqjqcx.cloudfront.net/
+      title: prod-demo
+      icon: dashboard
+    - url: https://d2k77s00h0549z.cloudfront.net/
+      title: prod-assess
+      icon: dashboard
+spec:
+  type: website
+  lifecycle: production
+  owner: group:default/cloudops
+  system: release-automation
+  dependsOn:
+    - component:default/releasebot
+---
+# ── Who gets paged ───────────────────────────────────────────────────────────
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: cloudops
+  description: CloudOps, News Group Digital.
+spec:
+  type: team
+  children: []
