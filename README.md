@@ -1,5 +1,7 @@
 # ReleaseBot (Robbie) — migration reference environment
 
+> **Picking this up on a new machine? Start at [docs/HANDOFF.md](docs/HANDOFF.md).**
+
 A working model of the NBC News CloudOps project: move ReleaseBot from the
 `msnbc-dev` AWS account to the `msnbc` production account, validate both in
 parallel, cut over, and decommission the dev resources.
