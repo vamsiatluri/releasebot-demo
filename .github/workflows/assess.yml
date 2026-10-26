@@ -1,0 +1,119 @@
+name: assess
+
+# Run the read-only account assessment in CI and keep the output as an artifact.
+#
+# ⚠️ THIS IS NOT THE EASY FALLBACK IT LOOKS LIKE. It needs an OIDC role in the
+# TARGET account that trusts this repository -- which is more access to arrange,
+# and more to explain to a security team, than running read-only from a laptop.
+# If you can run `aws sts get-caller-identity` locally, run it locally.
+#
+# Where this genuinely earns its place:
+#   · on a SCHEDULE, so drift between two accounts is noticed rather than
+#     discovered during a cutover window;
+#   · when the output has to land somewhere the team can see without anyone
+#     emailing JSON around.
+#
+# ⛔ Still read-only. Every call the tool makes is a get-/list-/describe-, and
+# the role below should be granted nothing more than AWS's own ReadOnlyAccess.
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: 'AWS region'
+        type: string
+        default: us-east-1
+      label:
+        description: 'Label for the report (e.g. msnbc-dev)'
+        type: string
+        required: true
+      estate:
+        description: 'Also read the 11 services a DECOMMISSION needs (slower)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write      # OIDC. Without it the assume-role fails with a confusing
+                       # "Not authorized to perform sts:AssumeRoleWithWebIdentity".
+
+jobs:
+  assess:
+    name: read the account
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.22', cache: true}
+
+      - name: Ask AWS for temporary credentials — OIDC, no stored key
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ASSESS_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+          role-session-name: assess-${{ github.run_id }}
+
+      - name: Which account did OIDC actually put us in?
+        run: aws sts get-caller-identity
+
+      - run: go build -o baseline ./cmd/baseline
+
+      # ⭐ FIRST, ALWAYS. Exit 1 means a required read is denied and the capture
+      # cannot be taken -- failing here with a named list of IAM actions is worth
+      # far more than failing four steps later with a raw AccessDenied.
+      # Exit 2 is "estate reads missing", which is fine unless -estate was asked
+      # for, so it is allowed through.
+      - name: Preflight — can this role read the account?
+        run: |
+          set +e
+          ./baseline preflight -region "${{ inputs.region }}" | tee preflight.txt
+          CODE=${PIPESTATUS[0]}
+          if [ "$CODE" = 1 ]; then
+            echo "::error::a required read is denied — see preflight.txt"
+            exit 1
+          fi
+          if [ "$CODE" = 2 ] && [ "${{ inputs.estate }}" = "true" ]; then
+            echo "::error::-estate was requested but the estate reads are denied"
+            exit 1
+          fi
+          exit 0
+
+      - name: Capture
+        run: |
+          # ⛔ No -prefix. A filtered capture looks complete and is a view of part
+          # of the account; on an assessment that is a wrong number, and on a
+          # teardown it is deletions that miss things while reporting success.
+          ESTATE=""; [ "${{ inputs.estate }}" = "true" ] && ESTATE="-estate"
+          # shellcheck disable=SC2086
+          ./baseline capture $ESTATE -region "${{ inputs.region }}" \
+            -label "${{ inputs.label }}" -out capture.json
+
+      - name: Review
+        run: |
+          set +e
+          ./baseline review -in capture.json | tee review.txt
+          # Blockers are the POINT of the report, not a reason to fail the run --
+          # a red run teaches people to stop reading the report.
+          echo "review exited ${PIPESTATUS[0]} (1 = blockers found, which is a finding)"
+          exit 0
+
+      - run: ./baseline generate -in capture.json -out generated.yaml
+
+      - name: Teardown plan
+        if: ${{ inputs.estate }}
+        run: ./baseline teardown -in capture.json -out teardown.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: assessment-${{ inputs.label }}-${{ github.run_id }}
+          path: |
+            preflight.txt
+            capture.json
+            review.txt
+            generated.yaml
+            teardown.md
+          if-no-files-found: warn
+          # ⚠️ The capture holds environment variable NAMES and resource ids, never
+          # secret VALUES -- the tool does not read them. It is still an inventory
+          # of someone's production account, so keep the retention short.
+          retention-days: 7
