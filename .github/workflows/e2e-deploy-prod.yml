@@ -1,0 +1,127 @@
+name: e2e · deploy prod (Slack approval)
+
+# Rehearsal of an approval-gated prod deploy for the migration e2e stack
+# (releasebot-clean, us-east-2). A published release posts an Approve / Reject
+# card to Slack; the deploy job waits on the `production` environment until a
+# click reaches slackApprove (POST /interact), which approves or rejects this
+# run's pending deployment through the GitHub API.
+#
+# Needs: repo secret E2E_SLACK_BOT_TOKEN (the prod bot's xoxb token) and repo
+# variable E2E_DEPLOY_PROD_ROLE_ARN (robbie-deploy-prod, trusted for
+# environment:production of this repo).
+
+on:
+  release:
+    types: [released]
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency: e2e-deploy-prod
+
+env:
+  AWS_REGION: us-east-2
+  CHANNEL: C0CDSEVA00L # #ng-release-automation in the rehearsal workspace
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build the function zips
+        run: make package-e2e
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zips
+          path: |
+            build/cutrelease.zip
+            build/mergeback.zip
+          retention-days: 3
+
+  ask:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post the Approve / Reject card
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.E2E_SLACK_BOT_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+          URL: ${{ github.event.release.html_url }}
+          BODY: ${{ github.event.release.body }}
+          ACTOR: ${{ github.actor }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # Version jump from the release notes' compare link, e.g. "1.4.0 → 1.4.1 (patch)".
+          new="${TAG#v}"
+          old="$(printf '%s\n' "$BODY" | grep -oE '/compare/v?[0-9]+\.[0-9]+\.[0-9]+\.\.\.' | head -1 | sed -E 's#/compare/v?##; s#\.\.\.$##' || true)"
+          jump="$new"
+          if [ -n "$old" ]; then
+            IFS=. read -r a b _ <<<"$old"; IFS=. read -r x y _ <<<"$new"
+            kind=patch; [ "$a" != "$x" ] && kind=major || { [ "$b" != "$y" ] && kind=minor; }
+            jump="$old → $new ($kind)"
+          fi
+          jq -n --arg ch "$CHANNEL" --arg jump "$jump" --arg tag "$TAG" --arg url "$URL" --arg actor "$ACTOR" \
+                --arg run "$RUN_URL" --arg id "$RUN_ID" --arg notes "$(printf '%s' "$BODY" | head -c 2500)" '{
+            channel: $ch,
+            text: "Release bot · prod deploy \($jump) waiting for approval",
+            blocks: [
+              {type: "header", text: {type: "plain_text", text: "Release bot · prod deploy \($jump)"}},
+              {type: "section", text: {type: "mrkdwn", text: "*<\($url)|\($tag)>* released by \($actor) · <\($run)|workflow run>\nDeploys `cutRelease` and `releaseAutomationMergeback` (rehearsal, us-east-2)."}},
+              {type: "section", text: {type: "mrkdwn", text: (if $notes == "" then "_No release notes._" else $notes end)}},
+              {type: "actions", elements: [
+                {type: "button", style: "primary", action_id: "robbie_deploy_approve", value: $id, text: {type: "plain_text", text: "Approve"}},
+                {type: "button", style: "danger", action_id: "robbie_deploy_reject", value: $id, text: {type: "plain_text", text: "Reject"},
+                 confirm: {title: {type: "plain_text", text: "Reject \($tag)?"}, text: {type: "plain_text", text: "The deploy will not run."},
+                           confirm: {type: "plain_text", text: "Reject"}, deny: {type: "plain_text", text: "Cancel"}}}
+              ]}
+            ]}' > card.json
+          res=$(curl -sS -X POST https://slack.com/api/chat.postMessage -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+                  -H 'Content-Type: application/json; charset=utf-8' --data @card.json)
+          [ "$(jq -r .ok <<<"$res")" = true ] || { echo "Slack refused the card: $(jq -r .error <<<"$res")" >&2; exit 1; }
+
+  deploy:
+    needs: [build, ask]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: zips
+          path: zips
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.E2E_DEPLOY_PROD_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Upload, publish, move live, verify
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          for pair in cutRelease:cutrelease releaseAutomationMergeback:mergeback; do
+            fn=${pair%%:*}; zip=zips/${pair##*:}.zip
+            aws lambda update-function-code --function-name "$fn" --zip-file "fileb://$zip" >/dev/null
+            aws lambda wait function-updated-v2 --function-name "$fn"
+            v=$(aws lambda publish-version --function-name "$fn" --description "$TAG" --query Version --output text)
+            aws lambda update-alias --function-name "$fn" --name live --function-version "$v" >/dev/null
+            live=$(aws lambda get-alias --function-name "$fn" --name live --query FunctionVersion --output text)
+            [ "$live" = "$v" ] || { echo "$fn: live is $live, expected $v" >&2; exit 1; }
+            echo "$fn: live -> v$v ($TAG)"
+          done
+
+      - name: Post the result
+        if: always()
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.E2E_SLACK_BOT_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+          STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$STATUS" = success ]; then t=":white_check_mark: Release bot $TAG deployed to prod (rehearsal). <$RUN_URL|run>"
+          else t=":x: Release bot $TAG prod deploy $STATUS. <$RUN_URL|run>"; fi
+          jq -n --arg ch "$CHANNEL" --arg t "$t" '{channel: $ch, text: $t}' |
+            curl -sS -X POST https://slack.com/api/chat.postMessage -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+              -H 'Content-Type: application/json; charset=utf-8' --data @- >/dev/null
