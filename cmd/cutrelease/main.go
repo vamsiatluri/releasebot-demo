@@ -13,10 +13,19 @@ import (
 	"github.com/vamsiatluri/releasebot-migration/internal/app"
 	"github.com/vamsiatluri/releasebot-migration/internal/events"
 	"github.com/vamsiatluri/releasebot-migration/internal/handler"
+	"github.com/vamsiatluri/releasebot-migration/internal/robbie"
 	"github.com/vamsiatluri/releasebot-migration/internal/runtime"
 )
 
 func main() {
+	// ★ Under the migration Terraform (ROBBIE_CONFIG_URL is always set there)
+	// this is the config-driven release bot. Without it, the original demo
+	// behaviour below is unchanged. See docs/E2E-REHEARSAL.md.
+	if robbie.Enabled() {
+		robbie.Main(robbie.KindCut, handler.BuildCommit)
+		return
+	}
+
 	// Build once, outside the invocation loop: configuration resolution and
 	// secret fetches belong in the INIT phase, which gets a 10s budget and
 	// (with provisioned concurrency) is not billed per request. Doing it

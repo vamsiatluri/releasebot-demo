@@ -48,6 +48,15 @@ var (
 
 // Verify checks a Slack request. body must be the raw, undecoded request body.
 func Verify(secret, signature, timestamp string, body []byte, now time.Time) error {
+	return VerifyVersion(secret, version, signature, timestamp, body, now)
+}
+
+// VerifyVersion is Verify with an explicit signature version (Slack's
+// SLACK_SIGNING_SECRET_VERSION_NUMBER, "v0" today). Empty means v0.
+func VerifyVersion(secret, sigVersion, signature, timestamp string, body []byte, now time.Time) error {
+	if sigVersion == "" {
+		sigVersion = version
+	}
 	if secret == "" {
 		return errors.New("slackverify: signing secret not configured")
 	}
@@ -84,9 +93,9 @@ func Verify(secret, signature, timestamp string, body []byte, now time.Time) err
 	}
 
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(version + ":" + timestamp + ":"))
+	mac.Write([]byte(sigVersion + ":" + timestamp + ":"))
 	mac.Write(body)
-	want := version + "=" + hex.EncodeToString(mac.Sum(nil))
+	want := sigVersion + "=" + hex.EncodeToString(mac.Sum(nil))
 
 	if !hmac.Equal([]byte(want), []byte(signature)) {
 		return ErrSignature

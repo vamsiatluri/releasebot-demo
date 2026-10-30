@@ -182,17 +182,24 @@ func asHTTPError(err error, dst **HTTPError) bool {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
+	_, err := c.doStatus(ctx, method, path, in, out)
+	return err
+}
+
+// doStatus is do, also returning the HTTP status (some GitHub calls answer
+// success with 201 vs 204 meaning different things).
+func (c *Client) doStatus(ctx context.Context, method, path string, in, out any) (int, error) {
 	var rdr io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		rdr = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, rdr)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
@@ -206,19 +213,19 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return fmt.Errorf("github: %s %s: %w", method, path, err)
+		return 0, fmt.Errorf("github: %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
 	if resp.StatusCode >= 300 {
-		return &HTTPError{StatusCode: resp.StatusCode, Method: method, Path: path,
+		return resp.StatusCode, &HTTPError{StatusCode: resp.StatusCode, Method: method, Path: path,
 			Body: truncate(string(body), 400)}
 	}
 	if out != nil && len(body) > 0 {
-		return json.Unmarshal(body, out)
+		return resp.StatusCode, json.Unmarshal(body, out)
 	}
-	return nil
+	return resp.StatusCode, nil
 }
 
 func truncate(s string, n int) string {

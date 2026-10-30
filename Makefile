@@ -36,7 +36,7 @@ FUNCTIONS := cutrelease mergeback
 # Built elsewhere, listed here so prune-stale knows they are not abandoned.
 EXTERNALLY_BUILT := slackapprove dashboardapi
 
-.PHONY: all build package test lint clean local mocks demo verify-zip prune-stale
+.PHONY: all build package package-e2e test lint clean local mocks demo verify-zip prune-stale
 
 all: test build
 
@@ -55,6 +55,15 @@ package: build
 	done
 	@$(MAKE) --no-print-directory prune-stale
 	@$(MAKE) --no-print-directory verify-zip
+
+# The three zips the migration Terraform deploys, for the end-to-end rehearsal
+# (docs/E2E-REHEARSAL.md): cutrelease + mergeback (provided.al2) and
+# slackapprove (provided.al2023). Same rules: bootstrap at the root,
+# linux/amd64, CGO off. slackapprove is in FUNCTIONS for THIS build only, so
+# prune-stale keeps the copy it just built.
+package-e2e:
+	@$(MAKE) --no-print-directory package FUNCTIONS="cutrelease mergeback slackapprove"
+	@ls -l $(BUILD_DIR)/*.zip
 
 # A packaging check that fails the build rather than failing at INIT in AWS.
 # Remove any zip this build did not produce.

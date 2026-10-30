@@ -39,8 +39,11 @@ func main() {
 	// request, which reads as a Slack outage rather than a config error. The
 	// error is logged where an operator will see it and the handler refuses.
 	resolveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	signing, errSign := secretref.Resolve(resolveCtx, os.Getenv("SLACK_SIGNING_SECRET"))
-	token, errTok := secretref.Resolve(resolveCtx, os.Getenv("GITHUB_APPROVAL_TOKEN"))
+	// Two contracts: this repo's (NAME = literal or ssm:/path) and the
+	// migration Terraform's (NAME_SSM_PARAM = a Parameter Store name, read
+	// with decryption).
+	signing, errSign := resolveSecret(resolveCtx, "SLACK_SIGNING_SECRET")
+	token, errTok := resolveSecret(resolveCtx, "GITHUB_APPROVAL_TOKEN")
 	cancel()
 	for name, err := range map[string]error{"SLACK_SIGNING_SECRET": errSign, "GITHUB_APPROVAL_TOKEN": errTok} {
 		if err != nil {
@@ -53,22 +56,28 @@ func main() {
 		initErr = errTok
 	}
 
+	owner, repo := splitRepo(os.Getenv("GITHUB_OWNER"), os.Getenv("GITHUB_REPO"))
+	if initErr == nil && (owner == "" || repo == "") {
+		initErr = fmt.Errorf("GITHUB_REPO must be owner/name (or set GITHUB_OWNER)")
+		fmt.Fprintln(os.Stderr, "INIT FAILED: "+initErr.Error())
+	}
 	cfg := slackapprove.Config{
-		SigningSecret: signing,
-		GitHubToken:   token,
-		GitHubAPI:     envOr("RELEASEBOT_GITHUB_API_URL", "https://api.github.com"),
-		Owner:         os.Getenv("GITHUB_OWNER"),
-		Repo:          os.Getenv("GITHUB_REPO"),
-		EnvironmentID: envID,
-		Approvers:     split(os.Getenv("SLACK_APPROVERS")),
-		AccountLabel:  os.Getenv("RELEASEBOT_ACCOUNT_LABEL"),
+		SigningSecret:   signing,
+		GitHubToken:     token,
+		GitHubAPI:       envOr("RELEASEBOT_GITHUB_API_URL", "https://api.github.com"),
+		Owner:           owner,
+		Repo:            repo,
+		EnvironmentID:   envID,
+		EnvironmentName: envOr("GITHUB_ENVIRONMENT", "production"),
+		Approvers:       split(os.Getenv("SLACK_APPROVERS")),
+		AccountLabel:    os.Getenv("RELEASEBOT_ACCOUNT_LABEL"),
 	}
 
 	runtime.Start(func(ctx context.Context, inv runtime.Invocation, p []byte) ([]byte, error) {
 		// Fail closed. An unresolved secret must never fall back to "" --
 		// that would make every HMAC comparison fail and look like Slack.
 		if initErr != nil {
-			return nil, fmt.Errorf("initialisation failed: could not resolve a secret")
+			return nil, fmt.Errorf("initialisation failed: %v", initErr)
 		}
 		var req events.APIGatewayProxyRequest
 		if err := json.Unmarshal(p, &req); err != nil {
@@ -140,6 +149,28 @@ func tellSlack(ctx context.Context, responseURL, text string) error {
 		return fmt.Errorf("slack returned %d: %s", resp.StatusCode, body)
 	}
 	return nil
+}
+
+// resolveSecret reads NAME (a literal or an ssm:/path reference), else
+// NAME_SSM_PARAM (a SecureString parameter name).
+func resolveSecret(ctx context.Context, name string) (string, error) {
+	if v := os.Getenv(name); v != "" {
+		return secretref.Resolve(ctx, v)
+	}
+	if p := strings.TrimSpace(os.Getenv(name + "_SSM_PARAM")); p != "" {
+		return secretref.Resolve(ctx, "ssm:"+p)
+	}
+	return "", fmt.Errorf("neither %s nor %s_SSM_PARAM is set", name, name)
+}
+
+// splitRepo accepts GITHUB_REPO=owner/name (the Terraform contract) or the
+// original GITHUB_OWNER + GITHUB_REPO=name pair.
+func splitRepo(owner, repo string) (string, string) {
+	repo = strings.TrimSpace(repo)
+	if i := strings.Index(repo, "/"); i > 0 {
+		return repo[:i], repo[i+1:]
+	}
+	return strings.TrimSpace(owner), repo
 }
 
 func envOr(k, d string) string {

@@ -97,3 +97,18 @@ func TestAnUnresolvedReferenceIsNotASignatureFailure(t *testing.T) {
 		t.Fatalf("a genuine secret must still verify: %v", err)
 	}
 }
+
+// SLACK_SIGNING_SECRET_VERSION_NUMBER is part of the signed base string and of
+// the signature's prefix; empty means v0.
+func TestVerifyVersion(t *testing.T) {
+	now := time.Now()
+	ts := strconv.FormatInt(now.Unix(), 10)
+	body := []byte("command=%2Fcut&text=kettle")
+	v0 := Sign("s3cret", ts, body)
+	if err := VerifyVersion("s3cret", "", v0, ts, body, now); err != nil {
+		t.Fatalf("empty version should mean v0: %v", err)
+	}
+	if err := VerifyVersion("s3cret", "v1", v0, ts, body, now); err == nil {
+		t.Fatal("a v0 signature verified as v1")
+	}
+}

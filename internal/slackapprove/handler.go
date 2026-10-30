@@ -40,6 +40,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -70,6 +71,10 @@ type Config struct {
 	Owner         string
 	Repo          string
 	EnvironmentID int
+	// EnvironmentName is GITHUB_ENVIRONMENT (e.g. "production"). When
+	// EnvironmentID is 0 the id is looked up from the run's pending
+	// deployments, so the Terraform contract (a NAME, no id) works unchanged.
+	EnvironmentName string
 	// Approvers are Slack user IDs permitted to approve. Empty means NOBODY --
 	// failing closed, because an empty allowlist read as "allow all" would turn
 	// a misconfiguration into an open door on a public endpoint.
@@ -86,8 +91,9 @@ type Config struct {
 type Interaction struct {
 	Type string `json:"type"`
 	User struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		Username string `json:"username"` // what block_actions payloads carry
 	} `json:"user"`
 	ResponseURL string `json:"response_url"`
 	Actions     []struct {
@@ -131,6 +137,14 @@ func (c Config) Handle(ctx context.Context, rawBody []byte, signature, timestamp
 	if len(in.Actions) == 0 {
 		return Result{Status: 200, Body: ""}
 	}
+	// Only the deploy buttons are ours. Slack allows one Interactivity URL per
+	// app, so every other button in the workspace lands here too and must be
+	// ignored -- before the approver check, so it cannot produce a refusal.
+	approve, known := actionDecision(in.Actions[0].ActionID)
+	if !known {
+		audit("ignored.action", in.User.ID, in.Actions[0].Value, "action_id="+in.Actions[0].ActionID)
+		return Result{Status: 200, Body: ""}
+	}
 
 	audit("click", in.User.ID, in.Actions[0].Value, "name="+in.User.Name)
 
@@ -155,17 +169,26 @@ func (c Config) Handle(ctx context.Context, rawBody []byte, signature, timestamp
 		return Result{Status: 200, Body: "", ResponseURL: in.ResponseURL,
 			Message: ":warning: that button carried no run id."}
 	}
+	// The run id goes into a GitHub URL path: digits only.
+	if n, err := strconv.ParseInt(runID, 10, 64); err != nil || n <= 0 {
+		return Result{Status: 200, Body: "", ResponseURL: in.ResponseURL,
+			Message: ":warning: that button carried no valid workflow run id."}
+	}
 
 	// ⚠️ The DECISION comes from action_id, never from the button's label.
 	// A label is display text; action_id is the contract. Reading intent from
 	// the label means a copy change silently turns Reject into Approve.
 	decision := "approved"
 	verb, past := "approve", "Approved"
-	if in.Actions[0].ActionID == "reject" {
+	if !approve {
 		decision, verb, past = "rejected", "reject", "Rejected"
 	}
 
-	if err := c.decide(ctx, runID, in.User.Name, decision); err != nil {
+	who := in.User.Username
+	if who == "" {
+		who = in.User.Name
+	}
+	if err := c.decide(ctx, runID, strings.TrimSpace(who+" ("+in.User.ID+")"), decision); err != nil {
 		audit(verb+".failed", in.User.ID, runID, err.Error())
 		return Result{Status: 200, Body: "", ResponseURL: in.ResponseURL,
 			Message: ":x: Could not " + verb + " run `" + runID + "`: " + err.Error()}
@@ -182,6 +205,27 @@ func (c Config) Handle(ctx context.Context, rawBody []byte, signature, timestamp
 	return Result{Status: 200, Body: "", ResponseURL: in.ResponseURL,
 		Message: fmt.Sprintf(":white_check_mark: Approved by <@%s>. Run `%s` is deploying to production now in `"+c.label()+"`.",
 			in.User.ID, runID)}
+}
+
+// Action ids the deploy card uses. The deploy workflow's card sends
+// robbie_deploy_approve / robbie_deploy_reject with the workflow run id as the
+// value; "approve" / "reject" are this repository's original ids, kept so its
+// own cards and tests keep working.
+const (
+	ActionApprove       = "robbie_deploy_approve"
+	ActionReject        = "robbie_deploy_reject"
+	legacyActionApprove = "approve"
+	legacyActionReject  = "reject"
+)
+
+func actionDecision(id string) (approve, known bool) {
+	switch id {
+	case ActionApprove, legacyActionApprove:
+		return true, true
+	case ActionReject, legacyActionReject:
+		return false, true
+	}
+	return false, false
 }
 
 func (c Config) permitted(userID string) bool {
@@ -204,8 +248,16 @@ func (c Config) decide(ctx context.Context, runID, who, state string) error {
 	if state == "rejected" {
 		comment = "Rejected from Slack by " + who
 	}
+	envID := c.EnvironmentID
+	if envID == 0 {
+		id, err := c.pendingEnvironmentID(ctx, runID)
+		if err != nil {
+			return err
+		}
+		envID = id
+	}
 	body, _ := json.Marshal(map[string]any{
-		"environment_ids": []int{c.EnvironmentID},
+		"environment_ids": []int{envID},
 		"state":           state,
 		"comment":         comment,
 	})
@@ -231,6 +283,52 @@ func (c Config) decide(ctx context.Context, runID, who, state string) error {
 		return fmt.Errorf("GitHub returned %d: %s", resp.StatusCode, truncate(string(raw), 200))
 	}
 	return nil
+}
+
+// pendingEnvironmentID finds the id of EnvironmentName among the run's pending
+// deployments that this token's user may approve.
+func (c Config) pendingEnvironmentID(ctx context.Context, runID string) (int, error) {
+	name := c.EnvironmentName
+	if name == "" {
+		name = "production"
+	}
+	u := fmt.Sprintf("%s/repos/%s/%s/actions/runs/%s/pending_deployments",
+		strings.TrimRight(c.GitHubAPI, "/"), c.Owner, c.Repo, runID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("Authorization", "Bearer "+c.GitHubToken)
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("GitHub returned %d reading pending deployments: %s", resp.StatusCode, truncate(string(raw), 200))
+	}
+	var pending []struct {
+		Environment struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		} `json:"environment"`
+		CurrentUserCanApprove bool `json:"current_user_can_approve"`
+	}
+	if err := json.Unmarshal(raw, &pending); err != nil {
+		return 0, fmt.Errorf("unreadable pending deployments: %w", err)
+	}
+	for _, p := range pending {
+		if strings.EqualFold(p.Environment.Name, name) {
+			if !p.CurrentUserCanApprove {
+				return 0, fmt.Errorf("the approval token's user is not a required reviewer of `%s`", name)
+			}
+			return p.Environment.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("run %s has nothing waiting on `%s` (already decided, cancelled or finished)", runID, name)
 }
 
 func truncate(s string, n int) string {

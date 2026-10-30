@@ -96,6 +96,10 @@ func Sign(req *http.Request, body []byte, c Credentials, service, region string,
 	if ct := req.Header.Get("Content-Type"); ct != "" {
 		hdrs["content-type"] = ct
 	}
+	// S3 refuses a request whose payload hash is not stated AND signed.
+	if h := req.Header.Get("X-Amz-Content-Sha256"); h != "" {
+		hdrs["x-amz-content-sha256"] = h
+	}
 	signed := make([]string, 0, len(hdrs))
 	for k := range hdrs {
 		signed = append(signed, k)

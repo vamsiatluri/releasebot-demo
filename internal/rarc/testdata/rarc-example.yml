@@ -1,0 +1,84 @@
+# An invented release config in the rarc data format, for unit tests and the
+# local rehearsal. Every value here is made up.
+---
+github:
+  mergelabel: ready to merge
+  recutlabel: recut
+slack:
+  releasechannel: C0DEMOREL
+  slackbotid: U0DEMOBOT
+  userid:
+jira:
+  baseURL: https://example-demo.atlassian.net
+  qaStateId: 31
+  doneStateID: 41
+  issueIDFormat: (?i)\bDEMO-\d+\b
+  fields:
+    platforms: customfield_20001
+    risk: customfield_20002
+    notes: customfield_20003
+    envVarChange: customfield_20004
+  perBoard:
+    KETL:
+      qaStateId: "21"
+      doneStateId: 22
+      issueTypes:
+        Bug:
+          qaStateId: 23
+
+projects:
+  - name: Kettle
+    repo: kettle
+    organization: acme-demo
+    approvalsneeded: 1
+    defaultbranch: develop
+    releasebranch: releases
+    masterBranch: main
+    automergeback: true
+    filterIssuesQuery: (labels is EMPTY OR labels != botIgnore)
+    filterCommitMessagePrefixes:
+      - "[skip-changelog]"
+    excludelabels:
+      - do not merge
+    masterMergebackLabels:
+      - mergeback
+    filesWithVersion:
+      - package.json
+      - package-lock.json
+    jira:
+      platform: '30001'
+      projectID: '30002'
+      releaseIssueTitleFormat: 'RELEASE: Kettle release %s'
+      releaseIssueTypeID: '30003'
+      releaseIssueProjectID: '30004'
+      releaseIssueProjectKey: DEMOREL
+      releaseIssueDefaultRisk: '30005'
+      issueIDFormat: (?i)[A-Z]+-\d+
+      autoDetectEnvVarChange: true
+      envVarChangeFieldKey: customfield_29999
+    slack:
+      teamchannel: C0DEMOTEAM
+      privatechannel: C0DEMOTEAM
+      channelTopic: 'Kettle is at {version}'
+      devteammention: S0DEMODEV
+      qamentions:
+      QaTeamMention:
+        - S0DEMOQA
+  - name: teapot-web
+    repo: teapot-web
+    organization: acme-demo
+    approvalsneeded: 0
+    defaultbranch: develop
+    releasebranch: master
+    masterBranch: ""
+    automergeback: false
+    filesWithVersion:
+      - version.yaml
+    jira:
+      platform: "30011"
+      projectID: "30012"
+      releaseIssueTitleFormat: "RELEASE: Kettle release admin %s"
+      releaseIssueTypeID: "30013"
+      releaseIssueProjectID: "30014"
+      releaseIssueProjectKey: DEMOREL
+      releaseIssueDefaultRisk: "30015"
