@@ -1,0 +1,191 @@
+
+Baseline: prod-demo
+  account 826653639065  region us-east-1  captured 2026-11-11 17:58 UTC
+  6 functions, 6 roles, 1 APIs, 14 log groups, 3 alarms
+
+  [BLOCKER] apigateway/releasebot
+             REGIONAL endpoint with NO resource policy — invocable by anyone on the internet
+             Every source on the internet can reach the endpoint and be rejected,
+             which still costs an invocation and a cold start before any signature is
+             checked. GitHub publishes 9 webhook CIDRs and Atlassian publishes its
+             egress ranges, so those paths are allowlistable today; Slack's are not,
+             which is why the signature -- not the network -- is the trust boundary.
+
+  [WARN   ] lambda/slackApprove
+             has no alias
+             Whatever invokes it is pointed at a mutable target, so there is no
+             one-step rollback. Adding an alias is additive and breaks nothing.
+
+  [WARN   ] lambda/releasebot-dashboard-api
+             has no alias
+             Whatever invokes it is pointed at a mutable target, so there is no
+             one-step rollback. Adding an alias is additive and breaks nothing.
+
+  [WARN   ] logs//aws/apigateway/welcome
+             never expires (216 B stored)
+             Created by Lambda rather than declared in a template, so it is owned by
+             no stack, survives the decommission, and keeps billing after the project
+             is finished.
+
+  [WARN   ] logs//aws/lambda/releasebot-egress-probe-45214
+             never expires (945 B stored)
+             Created by Lambda rather than declared in a template, so it is owned by
+             no stack, survives the decommission, and keeps billing after the project
+             is finished.
+
+  [WARN   ] logs//aws/lambda/releasebot-ghprobe
+             never expires (1.7 KB stored)
+             Created by Lambda rather than declared in a template, so it is owned by
+             no stack, survives the decommission, and keeps billing after the project
+             is finished.
+
+  [WARN   ] logs//aws/lambda/releasebot-goprobe
+             never expires (459 B stored)
+             Created by Lambda rather than declared in a template, so it is owned by
+             no stack, survives the decommission, and keeps billing after the project
+             is finished.
+
+  [WARN   ] logs//aws/lambda/releasebot-netprobe
+             never expires (461 B stored)
+             Created by Lambda rather than declared in a template, so it is owned by
+             no stack, survives the decommission, and keeps billing after the project
+             is finished.
+
+  [WARN   ] logs/API-Gateway-Execution-Logs_0aohv0kx5k/prod
+             never expires (1.9 MB stored)
+             Created by Lambda rather than declared in a template, so it is owned by
+             no stack, survives the decommission, and keeps billing after the project
+             is finished.
+
+  [WARN   ] logs/API-Gateway-Execution-Logs_0aohv0kx5k/test
+             never expires (2.1 MB stored)
+             Created by Lambda rather than declared in a template, so it is owned by
+             no stack, survives the decommission, and keeps billing after the project
+             is finished.
+
+  [WARN   ] apigateway/releasebot/test
+             no WAF web ACL on this stage
+             A web ACL associates with a stage, so this one has no rate limiting, no
+             managed rule groups, and no way to reject an unsigned request before it
+             reaches a function.
+
+  [WARN   ] alarm/releasebot-async-job-dropped
+             alarm notifies nobody
+             It will turn red on a dashboard and page no one. An alarm with no action
+             is decoration.
+
+  [INFO   ] lambda/slackApprove
+             secrets held BY REFERENCE: GITHUB_APPROVAL_TOKEN, SLACK_SIGNING_SECRET
+             These hold an ssm:/secretsmanager: pointer resolved at INIT, not a
+             value, so the function configuration carries no credential and a
+             published version freezes a pointer rather than the secret. ⚠️
+             Rotation still takes effect only on the next cold start.
+
+  [INFO   ] lambda/slackApprove
+             runtime is provided.al2
+             The previous generation. provided.al2023 is current and uses the same
+             contract. Worth a separate, approved change after the migration rather
+             than bundled into it.
+
+  [INFO   ] lambda/cutRelease
+             secrets held BY REFERENCE: GITHUB_TOKEN, JIRA_WEBHOOK_SECRET, SLACK_SIGNING_SECRET, SLACK_TOKEN
+             These hold an ssm:/secretsmanager: pointer resolved at INIT, not a
+             value, so the function configuration carries no credential and a
+             published version freezes a pointer rather than the secret. ⚠️
+             Rotation still takes effect only on the next cold start.
+
+  [INFO   ] lambda/cutRelease
+             runtime is provided.al2
+             The previous generation. provided.al2023 is current and uses the same
+             contract. Worth a separate, approved change after the migration rather
+             than bundled into it.
+
+  [INFO   ] lambda/releaseAutomationMergebackTest
+             secrets held BY REFERENCE: GITHUB_TOKEN, JIRA_WEBHOOK_SECRET, SLACK_SIGNING_SECRET, SLACK_TOKEN
+             These hold an ssm:/secretsmanager: pointer resolved at INIT, not a
+             value, so the function configuration carries no credential and a
+             published version freezes a pointer rather than the secret. ⚠️
+             Rotation still takes effect only on the next cold start.
+
+  [INFO   ] lambda/releaseAutomationMergebackTest
+             runtime is provided.al2
+             The previous generation. provided.al2023 is current and uses the same
+             contract. Worth a separate, approved change after the migration rather
+             than bundled into it.
+
+  [INFO   ] lambda/releasebot-dashboard-api
+             secrets held BY REFERENCE: GITHUB_TOKEN
+             These hold an ssm:/secretsmanager: pointer resolved at INIT, not a
+             value, so the function configuration carries no credential and a
+             published version freezes a pointer rather than the secret. ⚠️
+             Rotation still takes effect only on the next cold start.
+
+  [INFO   ] lambda/releasebot-dashboard-api
+             no reserved concurrency
+             Nothing caps how many copies can run at once. For a bot that writes to
+             source control, a retry storm is worth bounding.
+
+  [INFO   ] lambda/releasebot-dashboard-api
+             runtime is provided.al2
+             The previous generation. provided.al2023 is current and uses the same
+             contract. Worth a separate, approved change after the migration rather
+             than bundled into it.
+
+  [INFO   ] lambda/releaseAutomationMergeback
+             secrets held BY REFERENCE: GITHUB_TOKEN, JIRA_WEBHOOK_SECRET, SLACK_SIGNING_SECRET, SLACK_TOKEN
+             These hold an ssm:/secretsmanager: pointer resolved at INIT, not a
+             value, so the function configuration carries no credential and a
+             published version freezes a pointer rather than the secret. ⚠️
+             Rotation still takes effect only on the next cold start.
+
+  [INFO   ] lambda/releaseAutomationMergeback
+             runtime is provided.al2
+             The previous generation. provided.al2023 is current and uses the same
+             contract. Worth a separate, approved change after the migration rather
+             than bundled into it.
+
+  [INFO   ] lambda/cutReleaseTest
+             secrets held BY REFERENCE: GITHUB_TOKEN, JIRA_WEBHOOK_SECRET, SLACK_SIGNING_SECRET, SLACK_TOKEN
+             These hold an ssm:/secretsmanager: pointer resolved at INIT, not a
+             value, so the function configuration carries no credential and a
+             published version freezes a pointer rather than the secret. ⚠️
+             Rotation still takes effect only on the next cold start.
+
+  [INFO   ] lambda/cutReleaseTest
+             runtime is provided.al2
+             The previous generation. provided.al2023 is current and uses the same
+             contract. Worth a separate, approved change after the migration rather
+             than bundled into it.
+
+  [INFO   ] iam/releasebot-slack-approve-ExecutionRole-3j42Cx6xDYj3
+             carries inline policies: read-its-own-secrets
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  [INFO   ] iam/releasebot-exec-cutrelease
+             carries inline policies: async-failure-destination, env-config, release-ledger, secrets, self-invoke
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  [INFO   ] iam/releasebot-exec-mergeback-test
+             carries inline policies: async-failure-destination, env-config, release-ledger, secrets, self-invoke
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  [INFO   ] iam/releasebot-dashboard-ApiRole-ttjoWT4DNnuB
+             carries inline policies: read-its-own-github-token, read-release-functions, read-release-ledger, read-the-controls
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  [INFO   ] iam/releasebot-exec-mergeback
+             carries inline policies: async-failure-destination, env-config, release-ledger, secrets, self-invoke
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  [INFO   ] iam/releasebot-exec-cutrelease-test
+             carries inline policies: async-failure-destination, env-config, release-ledger, secrets, self-invoke
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  1 blockers, 11 warnings, 19 informational
+

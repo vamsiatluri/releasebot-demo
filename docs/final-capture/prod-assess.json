@@ -1,0 +1,854 @@
+{
+  "captured_at": "2026-11-11T17:59:45.208478Z",
+  "account": "450315222669",
+  "region": "us-east-1",
+  "label": "prod-assess",
+  "functions": [
+    {
+      "name": "cutReleaseTest",
+      "runtime": "provided.al2023",
+      "handler": "bootstrap",
+      "architectures": [
+        "x86_64"
+      ],
+      "memory_size": 512,
+      "timeout": 30,
+      "role_arn": "arn:aws:iam::450315222669:role/releasebot-exec-cutrelease-test",
+      "layers": null,
+      "reserved_concurrency": null,
+      "code_sha256": "I816HILw+ffc1rDcUqBFX/NgRy98O02Peck2W6pnL7c=",
+      "code_size": 2379456,
+      "last_modified": "2026-10-14T19:01:03.000+0000",
+      "env_keys": [
+        "DD_ENV",
+        "DD_SERVICE",
+        "DD_SITE",
+        "DEFAULT_OWNER",
+        "GITHUB_TOKEN",
+        "JIRA_WEBHOOK_SECRET",
+        "RARC_CONFIG_URL",
+        "RARC_ENV",
+        "RELEASEBOT_ACCOUNT_LABEL",
+        "RELEASEBOT_ACK_ONLY",
+        "RELEASEBOT_CUT_ALLOWLIST",
+        "RELEASEBOT_DRY_RUN",
+        "SECRETS_PREFIX",
+        "SLACK_CHANNEL",
+        "SLACK_SIGNING_SECRET",
+        "SLACK_TOKEN"
+      ],
+      "env_non_secret": {
+        "DD_ENV": "test",
+        "DD_SERVICE": "releasebot",
+        "DD_SITE": "datadoghq.com",
+        "DEFAULT_OWNER": "msnbc",
+        "RARC_CONFIG_URL": "",
+        "RARC_ENV": "test",
+        "RELEASEBOT_ACCOUNT_LABEL": "prod-assess",
+        "RELEASEBOT_ACK_ONLY": "1",
+        "RELEASEBOT_CUT_ALLOWLIST": "",
+        "RELEASEBOT_DRY_RUN": "1",
+        "SECRETS_PREFIX": "releasebot/test",
+        "SLACK_CHANNEL": ""
+      },
+      "secret_looking_keys": null,
+      "secret_by_reference_keys": [
+        "GITHUB_TOKEN",
+        "JIRA_WEBHOOK_SECRET",
+        "SLACK_SIGNING_SECRET",
+        "SLACK_TOKEN"
+      ],
+      "aliases": [
+        {
+          "name": "live",
+          "version": "7"
+        }
+      ],
+      "versions": [
+        "$LATEST",
+        "5",
+        "6",
+        "7"
+      ],
+      "tags": {
+        "app": "releasebot"
+      },
+      "stack_owned": true,
+      "owning_stack": "releasebot-lambda",
+      "resource_policy": "{\"Version\":\"2012-10-17\",\"Id\":\"default\",\"Statement\":[{\"Sid\":\"releasebot-edge-CutTestInvokePermission-G0X850sliGup\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"apigateway.amazonaws.com\"},\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-east-1:450315222669:function:cutReleaseTest:live\",\"Condition\":{\"ArnLike\":{\"AWS:SourceArn\":\"arn:aws:execute-api:us-east-1:450315222669:u4f22c74mi/*/*/*\"}}}]}"
+    },
+    {
+      "name": "releasebot-dashboard-api",
+      "runtime": "provided.al2",
+      "handler": "bootstrap",
+      "architectures": [
+        "x86_64"
+      ],
+      "memory_size": 256,
+      "timeout": 15,
+      "role_arn": "arn:aws:iam::450315222669:role/releasebot-dashboard-ApiRole-vChDsWd4AG15",
+      "layers": null,
+      "reserved_concurrency": null,
+      "code_sha256": "bJ9UAhsPo79Z0bkiLIsm+OHtR6lKAv58WMWyZwHmt+I=",
+      "code_size": 3033961,
+      "last_modified": "2026-10-14T02:26:54.000+0000",
+      "env_keys": [
+        "GITHUB_OWNER",
+        "GITHUB_REPO",
+        "GITHUB_TOKEN",
+        "GITHUB_WORKFLOW_FILE",
+        "RELEASEBOT_ACCOUNT",
+        "RELEASEBOT_HEALTH_BASE",
+        "RELEASEBOT_STAGES"
+      ],
+      "env_non_secret": {
+        "GITHUB_OWNER": "vamsiatluri",
+        "GITHUB_REPO": "releasebot-demo",
+        "GITHUB_WORKFLOW_FILE": "release.yml",
+        "RELEASEBOT_ACCOUNT": "450315222669",
+        "RELEASEBOT_HEALTH_BASE": "https://u4f22c74mi.execute-api.us-east-1.amazonaws.com",
+        "RELEASEBOT_STAGES": "prod,test"
+      },
+      "secret_looking_keys": null,
+      "secret_by_reference_keys": [
+        "GITHUB_TOKEN"
+      ],
+      "aliases": null,
+      "versions": [
+        "$LATEST"
+      ],
+      "tags": {},
+      "stack_owned": true,
+      "owning_stack": "releasebot-dashboard",
+      "resource_policy": "{\"Version\":\"2012-10-17\",\"Id\":\"default\",\"Statement\":[{\"Sid\":\"releasebot-dashboard-InvokePermission-fpvsrefxJSBE\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"apigateway.amazonaws.com\"},\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-east-1:450315222669:function:releasebot-dashboard-api\",\"Condition\":{\"ArnLike\":{\"AWS:SourceArn\":\"arn:aws:execute-api:us-east-1:450315222669:7iyo9c6um2/*/*/api/state\"}}}]}"
+    },
+    {
+      "name": "releaseAutomationMergeback",
+      "runtime": "provided.al2023",
+      "handler": "bootstrap",
+      "architectures": [
+        "x86_64"
+      ],
+      "memory_size": 512,
+      "timeout": 30,
+      "role_arn": "arn:aws:iam::450315222669:role/releasebot-exec-mergeback",
+      "layers": null,
+      "reserved_concurrency": null,
+      "code_sha256": "0PB4h9zjqgq4NZD2oswlNO3SFT/UTpgGZYtEjy3KG+4=",
+      "code_size": 3013147,
+      "last_modified": "2026-10-14T18:58:30.000+0000",
+      "env_keys": [
+        "DD_ENV",
+        "DD_SERVICE",
+        "DEFAULT_OWNER",
+        "GITHUB_TOKEN",
+        "JIRA_WEBHOOK_SECRET",
+        "RARC_CONFIG_URL",
+        "RARC_ENV",
+        "RELEASEBOT_ACCOUNT_LABEL",
+        "RELEASEBOT_ACK_ONLY",
+        "RELEASEBOT_CUT_ALLOWLIST",
+        "SECRETS_PREFIX",
+        "SLACK_CHANNEL",
+        "SLACK_SIGNING_SECRET",
+        "SLACK_TOKEN"
+      ],
+      "env_non_secret": {
+        "DD_ENV": "prod",
+        "DD_SERVICE": "releasebot",
+        "DEFAULT_OWNER": "msnbc",
+        "RARC_CONFIG_URL": "",
+        "RARC_ENV": "prod",
+        "RELEASEBOT_ACCOUNT_LABEL": "prod-assess",
+        "RELEASEBOT_ACK_ONLY": "1",
+        "RELEASEBOT_CUT_ALLOWLIST": "",
+        "SECRETS_PREFIX": "releasebot/prod",
+        "SLACK_CHANNEL": ""
+      },
+      "secret_looking_keys": null,
+      "secret_by_reference_keys": [
+        "GITHUB_TOKEN",
+        "JIRA_WEBHOOK_SECRET",
+        "SLACK_SIGNING_SECRET",
+        "SLACK_TOKEN"
+      ],
+      "aliases": [
+        {
+          "name": "live",
+          "version": "7"
+        }
+      ],
+      "versions": [
+        "$LATEST",
+        "6",
+        "7"
+      ],
+      "tags": {
+        "app": "releasebot"
+      },
+      "stack_owned": true,
+      "owning_stack": "releasebot-lambda",
+      "resource_policy": "{\"Version\":\"2012-10-17\",\"Id\":\"default\",\"Statement\":[{\"Sid\":\"releasebot-edge-MergeInvokePermission-lk3WGY5JE3Gf\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"apigateway.amazonaws.com\"},\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-east-1:450315222669:function:releaseAutomationMergeback:live\",\"Condition\":{\"ArnLike\":{\"AWS:SourceArn\":\"arn:aws:execute-api:us-east-1:450315222669:u4f22c74mi/*/*/*\"}}}]}"
+    },
+    {
+      "name": "releaseAutomationMergebackTest",
+      "runtime": "provided.al2023",
+      "handler": "bootstrap",
+      "architectures": [
+        "x86_64"
+      ],
+      "memory_size": 512,
+      "timeout": 30,
+      "role_arn": "arn:aws:iam::450315222669:role/releasebot-exec-mergeback-test",
+      "layers": null,
+      "reserved_concurrency": null,
+      "code_sha256": "aAoEHm9mZ6QMM9aMoFRAgT1n1KxeD/ktLPJSB9u4vsw=",
+      "code_size": 2379508,
+      "last_modified": "2026-10-14T19:01:09.000+0000",
+      "env_keys": [
+        "DD_ENV",
+        "DD_SERVICE",
+        "DEFAULT_OWNER",
+        "GITHUB_TOKEN",
+        "JIRA_WEBHOOK_SECRET",
+        "RARC_CONFIG_URL",
+        "RARC_ENV",
+        "RELEASEBOT_ACCOUNT_LABEL",
+        "RELEASEBOT_ACK_ONLY",
+        "RELEASEBOT_CUT_ALLOWLIST",
+        "RELEASEBOT_DRY_RUN",
+        "SECRETS_PREFIX",
+        "SLACK_CHANNEL",
+        "SLACK_SIGNING_SECRET",
+        "SLACK_TOKEN"
+      ],
+      "env_non_secret": {
+        "DD_ENV": "test",
+        "DD_SERVICE": "releasebot",
+        "DEFAULT_OWNER": "msnbc",
+        "RARC_CONFIG_URL": "",
+        "RARC_ENV": "test",
+        "RELEASEBOT_ACCOUNT_LABEL": "prod-assess",
+        "RELEASEBOT_ACK_ONLY": "1",
+        "RELEASEBOT_CUT_ALLOWLIST": "",
+        "RELEASEBOT_DRY_RUN": "1",
+        "SECRETS_PREFIX": "releasebot/test",
+        "SLACK_CHANNEL": ""
+      },
+      "secret_looking_keys": null,
+      "secret_by_reference_keys": [
+        "GITHUB_TOKEN",
+        "JIRA_WEBHOOK_SECRET",
+        "SLACK_SIGNING_SECRET",
+        "SLACK_TOKEN"
+      ],
+      "aliases": [
+        {
+          "name": "live",
+          "version": "7"
+        }
+      ],
+      "versions": [
+        "$LATEST",
+        "5",
+        "6",
+        "7"
+      ],
+      "tags": {
+        "app": "releasebot"
+      },
+      "stack_owned": true,
+      "owning_stack": "releasebot-lambda",
+      "resource_policy": "{\"Version\":\"2012-10-17\",\"Id\":\"default\",\"Statement\":[{\"Sid\":\"releasebot-edge-MergeTestInvokePermission-Vd2VhHjMGRlA\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"apigateway.amazonaws.com\"},\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-east-1:450315222669:function:releaseAutomationMergebackTest:live\",\"Condition\":{\"ArnLike\":{\"AWS:SourceArn\":\"arn:aws:execute-api:us-east-1:450315222669:u4f22c74mi/*/*/*\"}}}]}"
+    },
+    {
+      "name": "slackApprove",
+      "runtime": "provided.al2",
+      "handler": "bootstrap",
+      "architectures": [
+        "x86_64"
+      ],
+      "memory_size": 256,
+      "timeout": 15,
+      "role_arn": "arn:aws:iam::450315222669:role/releasebot-slack-approve-ExecutionRole-EKj0FmVABQSD",
+      "layers": null,
+      "reserved_concurrency": null,
+      "code_sha256": "MfYt5qpCMM9fHKSEbinlJL7i3JuNoua/lZIj4LEnfLw=",
+      "code_size": 2858775,
+      "last_modified": "2026-10-13T23:38:54.844+0000",
+      "env_keys": [
+        "GITHUB_APPROVAL_TOKEN",
+        "GITHUB_ENVIRONMENT_ID",
+        "GITHUB_OWNER",
+        "GITHUB_REPO",
+        "RELEASEBOT_ACCOUNT_LABEL",
+        "SLACK_APPROVERS",
+        "SLACK_SIGNING_SECRET"
+      ],
+      "env_non_secret": {
+        "GITHUB_ENVIRONMENT_ID": "23806238990",
+        "GITHUB_OWNER": "vamsiatluri",
+        "GITHUB_REPO": "releasebot-demo",
+        "RELEASEBOT_ACCOUNT_LABEL": "prod-assess",
+        "SLACK_APPROVERS": "U0C7UFTGKNW"
+      },
+      "secret_looking_keys": null,
+      "secret_by_reference_keys": [
+        "GITHUB_APPROVAL_TOKEN",
+        "SLACK_SIGNING_SECRET"
+      ],
+      "aliases": null,
+      "versions": [
+        "$LATEST"
+      ],
+      "tags": {},
+      "stack_owned": true,
+      "owning_stack": "releasebot-slack-approve",
+      "resource_policy": "{\"Version\":\"2012-10-17\",\"Id\":\"default\",\"Statement\":[{\"Sid\":\"releasebot-slack-approve-InvokePermission-Ap8ESA5G1AcU\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"apigateway.amazonaws.com\"},\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-east-1:450315222669:function:slackApprove\",\"Condition\":{\"ArnLike\":{\"AWS:SourceArn\":\"arn:aws:execute-api:us-east-1:450315222669:u4f22c74mi/*/*/*\"}}}]}"
+    },
+    {
+      "name": "cutRelease",
+      "runtime": "provided.al2023",
+      "handler": "bootstrap",
+      "architectures": [
+        "x86_64"
+      ],
+      "memory_size": 512,
+      "timeout": 30,
+      "role_arn": "arn:aws:iam::450315222669:role/releasebot-exec-cutrelease",
+      "layers": null,
+      "reserved_concurrency": null,
+      "code_sha256": "oPLw3mnZORKHn6V3sTNm7iiKNVpV68ZdsDMOJPa+jSE=",
+      "code_size": 3013149,
+      "last_modified": "2026-10-14T18:58:31.000+0000",
+      "env_keys": [
+        "DD_ENV",
+        "DD_SERVICE",
+        "DD_SITE",
+        "DD_TRACE_ENABLED",
+        "DEFAULT_OWNER",
+        "GITHUB_TOKEN",
+        "JIRA_WEBHOOK_SECRET",
+        "RARC_CONFIG_URL",
+        "RARC_ENV",
+        "RELEASEBOT_ACCOUNT_LABEL",
+        "RELEASEBOT_ACK_ONLY",
+        "RELEASEBOT_CUT_ALLOWLIST",
+        "SECRETS_PREFIX",
+        "SLACK_CHANNEL",
+        "SLACK_SIGNING_SECRET",
+        "SLACK_TOKEN"
+      ],
+      "env_non_secret": {
+        "DD_ENV": "prod",
+        "DD_SERVICE": "releasebot",
+        "DD_SITE": "datadoghq.com",
+        "DD_TRACE_ENABLED": "true",
+        "DEFAULT_OWNER": "msnbc",
+        "RARC_CONFIG_URL": "",
+        "RARC_ENV": "prod",
+        "RELEASEBOT_ACCOUNT_LABEL": "prod-assess",
+        "RELEASEBOT_ACK_ONLY": "1",
+        "RELEASEBOT_CUT_ALLOWLIST": "",
+        "SECRETS_PREFIX": "releasebot/prod",
+        "SLACK_CHANNEL": ""
+      },
+      "secret_looking_keys": null,
+      "secret_by_reference_keys": [
+        "GITHUB_TOKEN",
+        "JIRA_WEBHOOK_SECRET",
+        "SLACK_SIGNING_SECRET",
+        "SLACK_TOKEN"
+      ],
+      "aliases": [
+        {
+          "name": "live",
+          "version": "7"
+        }
+      ],
+      "versions": [
+        "$LATEST",
+        "6",
+        "7"
+      ],
+      "tags": {
+        "app": "releasebot",
+        "migration": "msnbc-dev-to-msnbc-prod"
+      },
+      "stack_owned": true,
+      "owning_stack": "releasebot-lambda",
+      "resource_policy": "{\"Version\":\"2012-10-17\",\"Id\":\"default\",\"Statement\":[{\"Sid\":\"releasebot-edge-CutInvokePermission-4bfA5rUrHrcL\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"apigateway.amazonaws.com\"},\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-east-1:450315222669:function:cutRelease:live\",\"Condition\":{\"ArnLike\":{\"AWS:SourceArn\":\"arn:aws:execute-api:us-east-1:450315222669:u4f22c74mi/*/*/*\"}}}]}"
+    }
+  ],
+  "roles": [
+    {
+      "name": "releasebot-exec-cutrelease-test",
+      "arn": "arn:aws:iam::450315222669:role/releasebot-exec-cutrelease-test",
+      "trust_policy": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"}}],\"Version\":\"2012-10-17\"}",
+      "managed_policies": [
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      ],
+      "inline_policies": {
+        "async-failure-destination": "{\"Statement\":[{\"Action\":\"sqs:SendMessage\",\"Effect\":\"Allow\",\"Resource\":\"arn:aws:sqs:us-east-1:450315222669:releasebot-async-failures\"}],\"Version\":\"2012-10-17\"}",
+        "env-config": "{\"Statement\":[{\"Action\":[\"ssm:GetParametersByPath\",\"ssm:GetParameter\",\"ssm:GetParameters\"],\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:ssm:us-east-1:450315222669:parameter/releasebot/test\",\"arn:aws:ssm:us-east-1:450315222669:parameter/releasebot/test/*\"]}],\"Version\":\"2012-10-17\"}",
+        "release-ledger": "{\"Statement\":[{\"Action\":\"dynamodb:PutItem\",\"Condition\":{\"ForAllValues:StringEquals\":{\"dynamodb:LeadingKeys\":[\"ENV#test\"]}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:dynamodb:us-east-1:450315222669:table/releasebot-ledger\"}],\"Version\":\"2012-10-17\"}",
+        "secrets": "{\"Statement\":[{\"Action\":\"secretsmanager:GetSecretValue\",\"Effect\":\"Allow\",\"Resource\":\"arn:aws:secretsmanager:us-east-1:450315222669:secret:releasebot/test/*\"},{\"Action\":[\"kms:Decrypt\"],\"Condition\":{\"StringEquals\":{\"kms:ViaService\":[\"secretsmanager.us-east-1.amazonaws.com\",\"ssm.us-east-1.amazonaws.com\"]}},\"Effect\":\"Allow\",\"Resource\":\"*\"}],\"Version\":\"2012-10-17\"}",
+        "self-invoke": "{\"Statement\":[{\"Action\":\"lambda:InvokeFunction\",\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:lambda:us-east-1:450315222669:function:cutReleaseTest\",\"arn:aws:lambda:us-east-1:450315222669:function:cutReleaseTest:*\"]}],\"Version\":\"2012-10-17\"}"
+      },
+      "stack_owned": true,
+      "owning_stack": "releasebot-iam"
+    },
+    {
+      "name": "releasebot-dashboard-ApiRole-vChDsWd4AG15",
+      "arn": "arn:aws:iam::450315222669:role/releasebot-dashboard-ApiRole-vChDsWd4AG15",
+      "trust_policy": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"}}],\"Version\":\"2012-10-17\"}",
+      "managed_policies": [
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      ],
+      "inline_policies": {
+        "read-its-own-github-token": "{\"Statement\":[{\"Action\":[\"ssm:GetParameter\"],\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:ssm:us-east-1:450315222669:parameter/releasebot/prod/secrets/dashboard-github-token\"]},{\"Action\":[\"kms:Decrypt\"],\"Condition\":{\"StringEquals\":{\"kms:ViaService\":\"ssm.us-east-1.amazonaws.com\"}},\"Effect\":\"Allow\",\"Resource\":\"*\"}],\"Version\":\"2012-10-17\"}",
+        "read-release-functions": "{\"Statement\":[{\"Action\":[\"lambda:GetFunctionConfiguration\",\"lambda:ListVersionsByFunction\",\"lambda:GetAlias\"],\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:lambda:us-east-1:450315222669:function:cutRelease*\",\"arn:aws:lambda:us-east-1:450315222669:function:releaseAutomationMergeback*\"]}],\"Version\":\"2012-10-17\"}",
+        "read-release-ledger": "{\"Statement\":[{\"Action\":[\"dynamodb:Query\"],\"Effect\":\"Allow\",\"Resource\":\"arn:aws:dynamodb:us-east-1:450315222669:table/releasebot-ledger\"}],\"Version\":\"2012-10-17\"}",
+        "read-the-controls": "{\"Statement\":[{\"Action\":\"sqs:GetQueueAttributes\",\"Effect\":\"Allow\",\"Resource\":\"arn:aws:sqs:us-east-1:450315222669:releasebot-async-failures\"},{\"Action\":\"cloudwatch:DescribeAlarms\",\"Effect\":\"Allow\",\"Resource\":\"*\"},{\"Action\":\"apigateway:GET\",\"Effect\":\"Allow\",\"Resource\":\"arn:aws:apigateway:us-east-1::/restapis/*/stages/*\"}],\"Version\":\"2012-10-17\"}"
+      },
+      "stack_owned": true,
+      "owning_stack": "releasebot-dashboard"
+    },
+    {
+      "name": "releasebot-exec-mergeback",
+      "arn": "arn:aws:iam::450315222669:role/releasebot-exec-mergeback",
+      "trust_policy": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"}}],\"Version\":\"2012-10-17\"}",
+      "managed_policies": [
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      ],
+      "inline_policies": {
+        "async-failure-destination": "{\"Statement\":[{\"Action\":\"sqs:SendMessage\",\"Effect\":\"Allow\",\"Resource\":\"arn:aws:sqs:us-east-1:450315222669:releasebot-async-failures\"}],\"Version\":\"2012-10-17\"}",
+        "env-config": "{\"Statement\":[{\"Action\":[\"ssm:GetParametersByPath\",\"ssm:GetParameter\",\"ssm:GetParameters\"],\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:ssm:us-east-1:450315222669:parameter/releasebot/prod\",\"arn:aws:ssm:us-east-1:450315222669:parameter/releasebot/prod/*\"]}],\"Version\":\"2012-10-17\"}",
+        "release-ledger": "{\"Statement\":[{\"Action\":\"dynamodb:PutItem\",\"Condition\":{\"ForAllValues:StringEquals\":{\"dynamodb:LeadingKeys\":[\"ENV#prod\"]}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:dynamodb:us-east-1:450315222669:table/releasebot-ledger\"}],\"Version\":\"2012-10-17\"}",
+        "secrets": "{\"Statement\":[{\"Action\":\"secretsmanager:GetSecretValue\",\"Effect\":\"Allow\",\"Resource\":\"arn:aws:secretsmanager:us-east-1:450315222669:secret:releasebot/prod/*\"},{\"Action\":[\"kms:Decrypt\"],\"Condition\":{\"StringEquals\":{\"kms:ViaService\":[\"secretsmanager.us-east-1.amazonaws.com\",\"ssm.us-east-1.amazonaws.com\"]}},\"Effect\":\"Allow\",\"Resource\":\"*\"}],\"Version\":\"2012-10-17\"}",
+        "self-invoke": "{\"Statement\":[{\"Action\":\"lambda:InvokeFunction\",\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:lambda:us-east-1:450315222669:function:releaseAutomationMergeback\",\"arn:aws:lambda:us-east-1:450315222669:function:releaseAutomationMergeback:*\"]}],\"Version\":\"2012-10-17\"}"
+      },
+      "stack_owned": true,
+      "owning_stack": "releasebot-iam"
+    },
+    {
+      "name": "releasebot-exec-mergeback-test",
+      "arn": "arn:aws:iam::450315222669:role/releasebot-exec-mergeback-test",
+      "trust_policy": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"}}],\"Version\":\"2012-10-17\"}",
+      "managed_policies": [
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      ],
+      "inline_policies": {
+        "async-failure-destination": "{\"Statement\":[{\"Action\":\"sqs:SendMessage\",\"Effect\":\"Allow\",\"Resource\":\"arn:aws:sqs:us-east-1:450315222669:releasebot-async-failures\"}],\"Version\":\"2012-10-17\"}",
+        "env-config": "{\"Statement\":[{\"Action\":[\"ssm:GetParametersByPath\",\"ssm:GetParameter\",\"ssm:GetParameters\"],\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:ssm:us-east-1:450315222669:parameter/releasebot/test\",\"arn:aws:ssm:us-east-1:450315222669:parameter/releasebot/test/*\"]}],\"Version\":\"2012-10-17\"}",
+        "release-ledger": "{\"Statement\":[{\"Action\":\"dynamodb:PutItem\",\"Condition\":{\"ForAllValues:StringEquals\":{\"dynamodb:LeadingKeys\":[\"ENV#test\"]}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:dynamodb:us-east-1:450315222669:table/releasebot-ledger\"}],\"Version\":\"2012-10-17\"}",
+        "secrets": "{\"Statement\":[{\"Action\":\"secretsmanager:GetSecretValue\",\"Effect\":\"Allow\",\"Resource\":\"arn:aws:secretsmanager:us-east-1:450315222669:secret:releasebot/test/*\"},{\"Action\":[\"kms:Decrypt\"],\"Condition\":{\"StringEquals\":{\"kms:ViaService\":[\"secretsmanager.us-east-1.amazonaws.com\",\"ssm.us-east-1.amazonaws.com\"]}},\"Effect\":\"Allow\",\"Resource\":\"*\"}],\"Version\":\"2012-10-17\"}",
+        "self-invoke": "{\"Statement\":[{\"Action\":\"lambda:InvokeFunction\",\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:lambda:us-east-1:450315222669:function:releaseAutomationMergebackTest\",\"arn:aws:lambda:us-east-1:450315222669:function:releaseAutomationMergebackTest:*\"]}],\"Version\":\"2012-10-17\"}"
+      },
+      "stack_owned": true,
+      "owning_stack": "releasebot-iam"
+    },
+    {
+      "name": "releasebot-slack-approve-ExecutionRole-EKj0FmVABQSD",
+      "arn": "arn:aws:iam::450315222669:role/releasebot-slack-approve-ExecutionRole-EKj0FmVABQSD",
+      "trust_policy": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"}}],\"Version\":\"2012-10-17\"}",
+      "managed_policies": [
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      ],
+      "inline_policies": {
+        "read-its-own-secrets": "{\"Statement\":[{\"Action\":[\"ssm:GetParameter\"],\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:ssm:us-east-1:450315222669:parameter/releasebot/prod/secrets/slack-approve-signing-secret\",\"arn:aws:ssm:us-east-1:450315222669:parameter/releasebot/prod/secrets/github-approval-token\"]},{\"Action\":[\"kms:Decrypt\"],\"Condition\":{\"StringEquals\":{\"kms:ViaService\":\"ssm.us-east-1.amazonaws.com\"}},\"Effect\":\"Allow\",\"Resource\":\"*\"}],\"Version\":\"2012-10-17\"}"
+      },
+      "stack_owned": true,
+      "owning_stack": "releasebot-slack-approve"
+    },
+    {
+      "name": "releasebot-exec-cutrelease",
+      "arn": "arn:aws:iam::450315222669:role/releasebot-exec-cutrelease",
+      "trust_policy": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"}}],\"Version\":\"2012-10-17\"}",
+      "managed_policies": [
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      ],
+      "inline_policies": {
+        "async-failure-destination": "{\"Statement\":[{\"Action\":\"sqs:SendMessage\",\"Effect\":\"Allow\",\"Resource\":\"arn:aws:sqs:us-east-1:450315222669:releasebot-async-failures\"}],\"Version\":\"2012-10-17\"}",
+        "env-config": "{\"Statement\":[{\"Action\":[\"ssm:GetParametersByPath\",\"ssm:GetParameter\",\"ssm:GetParameters\"],\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:ssm:us-east-1:450315222669:parameter/releasebot/prod\",\"arn:aws:ssm:us-east-1:450315222669:parameter/releasebot/prod/*\"]}],\"Version\":\"2012-10-17\"}",
+        "release-ledger": "{\"Statement\":[{\"Action\":\"dynamodb:PutItem\",\"Condition\":{\"ForAllValues:StringEquals\":{\"dynamodb:LeadingKeys\":[\"ENV#prod\"]}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:dynamodb:us-east-1:450315222669:table/releasebot-ledger\"}],\"Version\":\"2012-10-17\"}",
+        "secrets": "{\"Statement\":[{\"Action\":\"secretsmanager:GetSecretValue\",\"Effect\":\"Allow\",\"Resource\":\"arn:aws:secretsmanager:us-east-1:450315222669:secret:releasebot/prod/*\"},{\"Action\":[\"kms:Decrypt\"],\"Condition\":{\"StringEquals\":{\"kms:ViaService\":[\"secretsmanager.us-east-1.amazonaws.com\",\"ssm.us-east-1.amazonaws.com\"]}},\"Effect\":\"Allow\",\"Resource\":\"*\"}],\"Version\":\"2012-10-17\"}",
+        "self-invoke": "{\"Statement\":[{\"Action\":\"lambda:InvokeFunction\",\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:lambda:us-east-1:450315222669:function:cutRelease\",\"arn:aws:lambda:us-east-1:450315222669:function:cutRelease:*\"]}],\"Version\":\"2012-10-17\"}"
+      },
+      "stack_owned": true,
+      "owning_stack": "releasebot-iam"
+    }
+  ],
+  "apis": [
+    {
+      "id": "u4f22c74mi",
+      "name": "releasebot",
+      "type": "REST",
+      "endpoint_type": "REGIONAL",
+      "routes": [
+        {
+          "path": "/beta/slack/interact",
+          "method": "POST",
+          "authorization": "NONE",
+          "integration_type": "AWS_PROXY",
+          "integration_uri": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:450315222669:function:slackApprove/invocations"
+        },
+        {
+          "path": "/beta/health",
+          "method": "GET",
+          "authorization": "NONE",
+          "integration_type": "AWS_PROXY",
+          "integration_uri": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:450315222669:function:${stageVariables.cutFn}/invocations"
+        },
+        {
+          "path": "/beta/cut",
+          "method": "POST",
+          "authorization": "NONE",
+          "integration_type": "AWS_PROXY",
+          "integration_uri": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:450315222669:function:${stageVariables.cutFn}/invocations"
+        },
+        {
+          "path": "/beta/merge",
+          "method": "POST",
+          "authorization": "NONE",
+          "integration_type": "AWS_PROXY",
+          "integration_uri": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:450315222669:function:${stageVariables.mergeFn}/invocations"
+        }
+      ],
+      "stages": [
+        {
+          "name": "prod",
+          "deployment_id": "ulqnt4",
+          "variables": {
+            "cutFn": "cutRelease:live",
+            "mergeFn": "releaseAutomationMergeback:live"
+          },
+          "tracing_enabled": true,
+          "access_log_destination": "arn:aws:logs:us-east-1:450315222669:log-group:/aws/apigateway/releasebot",
+          "logging_level": "INFO",
+          "data_trace_enabled": false,
+          "throttle_rate": 10,
+          "throttle_burst": 20,
+          "web_acl_arn": "arn:aws:wafv2:us-east-1:450315222669:regional/webacl/releasebot-edge/acfde826-4731-4cb4-81d7-83e2fc3ded39"
+        },
+        {
+          "name": "test",
+          "deployment_id": "ulqnt4",
+          "variables": {
+            "cutFn": "cutReleaseTest:live",
+            "mergeFn": "releaseAutomationMergebackTest:live"
+          },
+          "tracing_enabled": true,
+          "access_log_destination": "arn:aws:logs:us-east-1:450315222669:log-group:/aws/apigateway/releasebot",
+          "logging_level": "INFO",
+          "data_trace_enabled": false,
+          "throttle_rate": 10,
+          "throttle_burst": 20
+        }
+      ],
+      "stack_owned": true,
+      "owning_stack": "releasebot-edge"
+    }
+  ],
+  "log_groups": [
+    {
+      "name": "/aws/apigateway/releasebot",
+      "retention_days": 30,
+      "stored_bytes": 643604,
+      "implicit": false
+    },
+    {
+      "name": "/aws/apigateway/welcome",
+      "retention_days": 0,
+      "stored_bytes": 110,
+      "implicit": true
+    },
+    {
+      "name": "/aws/lambda/cutRelease",
+      "retention_days": 30,
+      "stored_bytes": 422413,
+      "implicit": false
+    },
+    {
+      "name": "/aws/lambda/cutReleaseTest",
+      "retention_days": 30,
+      "stored_bytes": 568978,
+      "implicit": false
+    },
+    {
+      "name": "/aws/lambda/releaseAutomationMergeback",
+      "retention_days": 30,
+      "stored_bytes": 0,
+      "implicit": false
+    },
+    {
+      "name": "/aws/lambda/releaseAutomationMergebackTest",
+      "retention_days": 30,
+      "stored_bytes": 0,
+      "implicit": false
+    },
+    {
+      "name": "/aws/lambda/releasebot-dashboard-api",
+      "retention_days": 7,
+      "stored_bytes": 0,
+      "implicit": false
+    },
+    {
+      "name": "/aws/lambda/slackApprove",
+      "retention_days": 7,
+      "stored_bytes": 0,
+      "implicit": false
+    },
+    {
+      "name": "API-Gateway-Execution-Logs_u4f22c74mi/prod",
+      "retention_days": 0,
+      "stored_bytes": 977889,
+      "implicit": true
+    },
+    {
+      "name": "API-Gateway-Execution-Logs_u4f22c74mi/test",
+      "retention_days": 0,
+      "stored_bytes": 978742,
+      "implicit": true
+    }
+  ],
+  "alarms": [
+    {
+      "name": "releasebot-async-job-dropped",
+      "namespace": "AWS/SQS",
+      "metric_name": "ApproximateNumberOfMessagesVisible",
+      "threshold": 0,
+      "comparison": "GreaterThanThreshold",
+      "treat_missing_data": "notBreaching",
+      "alarm_actions": [],
+      "actions_enabled": true,
+      "stack_owned": true
+    },
+    {
+      "name": "releasebot-contract-critical-failure",
+      "namespace": "ReleaseBot",
+      "metric_name": "ContractCriticalFailed",
+      "threshold": 0,
+      "comparison": "GreaterThanThreshold",
+      "treat_missing_data": "notBreaching",
+      "alarm_actions": [
+        "arn:aws:sns:us-east-1:450315222669:releasebot-alarms"
+      ],
+      "actions_enabled": true,
+      "stack_owned": true
+    },
+    {
+      "name": "releasebot-contract-not-reporting",
+      "namespace": "ReleaseBot",
+      "metric_name": "ContractSuccessPercent",
+      "threshold": 1,
+      "comparison": "LessThanThreshold",
+      "treat_missing_data": "breaching",
+      "alarm_actions": [
+        "arn:aws:sns:us-east-1:450315222669:releasebot-alarms"
+      ],
+      "actions_enabled": true,
+      "stack_owned": true
+    }
+  ],
+  "notes": null,
+  "estate": true,
+  "buckets": [
+    {
+      "name": "releasebot-artifacts-450315222669",
+      "stack_owned": false
+    },
+    {
+      "name": "releasebot-dashboard-site-450315222669",
+      "stack_owned": true,
+      "owning_stack": "releasebot-dashboard"
+    }
+  ],
+  "tables": [
+    {
+      "name": "releasebot-ledger",
+      "deletion_protection": false,
+      "deletion_policy_retain": false,
+      "item_count": 0,
+      "stack_owned": true,
+      "owning_stack": "releasebot-lambda"
+    }
+  ],
+  "parameters": [
+    {
+      "name": "/releasebot/prod/ack-only",
+      "type": "String"
+    },
+    {
+      "name": "/releasebot/prod/datadog-service",
+      "type": "String"
+    },
+    {
+      "name": "/releasebot/prod/datadog-site",
+      "type": "String"
+    },
+    {
+      "name": "/releasebot/prod/default-branch",
+      "type": "String"
+    },
+    {
+      "name": "/releasebot/prod/default-owner",
+      "type": "String"
+    },
+    {
+      "name": "/releasebot/prod/github-api-url",
+      "type": "String"
+    },
+    {
+      "name": "/releasebot/prod/properties",
+      "type": "String"
+    },
+    {
+      "name": "/releasebot/prod/secrets/dashboard-github-token",
+      "type": "SecureString"
+    },
+    {
+      "name": "/releasebot/prod/secrets/github-token",
+      "type": "SecureString"
+    },
+    {
+      "name": "/releasebot/prod/secrets/jira-webhook-secret",
+      "type": "SecureString"
+    },
+    {
+      "name": "/releasebot/prod/secrets/slack-signing-secret",
+      "type": "SecureString"
+    },
+    {
+      "name": "/releasebot/prod/secrets/slack-token",
+      "type": "SecureString"
+    },
+    {
+      "name": "/releasebot/prod/slack-channel",
+      "type": "String"
+    },
+    {
+      "name": "/releasebot/test/ack-only",
+      "type": "String"
+    },
+    {
+      "name": "/releasebot/test/datadog-service",
+      "type": "String"
+    },
+    {
+      "name": "/releasebot/test/datadog-site",
+      "type": "String"
+    },
+    {
+      "name": "/releasebot/test/default-branch",
+      "type": "String"
+    },
+    {
+      "name": "/releasebot/test/default-owner",
+      "type": "String"
+    },
+    {
+      "name": "/releasebot/test/github-api-url",
+      "type": "String"
+    },
+    {
+      "name": "/releasebot/test/properties",
+      "type": "String"
+    },
+    {
+      "name": "/releasebot/test/secrets/github-token",
+      "type": "SecureString"
+    },
+    {
+      "name": "/releasebot/test/secrets/jira-webhook-secret",
+      "type": "SecureString"
+    },
+    {
+      "name": "/releasebot/test/secrets/slack-signing-secret",
+      "type": "SecureString"
+    },
+    {
+      "name": "/releasebot/test/secrets/slack-token",
+      "type": "SecureString"
+    },
+    {
+      "name": "/releasebot/test/slack-channel",
+      "type": "String"
+    }
+  ],
+  "networks": [
+    {
+      "vpc_id": "vpc-07f979ccf7d4cb487",
+      "cidr_block": "172.31.0.0/16",
+      "is_default": true,
+      "subnets": 6,
+      "nat_gateways": 0,
+      "vpc_endpoints": 0,
+      "enis_at_capture": 0,
+      "stack_owned": false
+    },
+    {
+      "vpc_id": "vpc-0b9c3b3f344647165",
+      "cidr_block": "10.80.0.0/16",
+      "is_default": false,
+      "subnets": 2,
+      "nat_gateways": 0,
+      "vpc_endpoints": 4,
+      "enis_at_capture": 6,
+      "stack_owned": true,
+      "owning_stack": "releasebot-network"
+    }
+  ],
+  "simple": [
+    {
+      "class": "sqs",
+      "name": "releasebot-async-failures",
+      "id": "https://sqs.us-east-1.amazonaws.com/450315222669/releasebot-async-failures",
+      "stack_owned": true,
+      "owning_stack": "releasebot-lambda"
+    },
+    {
+      "class": "sns",
+      "name": "releasebot-alarms",
+      "id": "arn:aws:sns:us-east-1:450315222669:releasebot-alarms",
+      "stack_owned": true,
+      "owning_stack": "releasebot-observability"
+    },
+    {
+      "class": "cloudfront",
+      "name": "releasebot-dashboard dashboard",
+      "id": "E2L06Q25B0QLUO",
+      "detail": "enabled=true status=Deployed",
+      "stack_owned": true,
+      "owning_stack": "releasebot-dashboard"
+    },
+    {
+      "class": "cloudfront",
+      "name": "Robbie App Onboarding",
+      "id": "E3SEZU6QQCDBGM",
+      "detail": "enabled=true status=Deployed",
+      "stack_owned": false
+    },
+    {
+      "class": "wafv2",
+      "name": "releasebot-edge",
+      "id": "arn:aws:wafv2:us-east-1:450315222669:regional/webacl/releasebot-edge/acfde826-4731-4cb4-81d7-83e2fc3ded39",
+      "detail": "scope=REGIONAL",
+      "stack_owned": true,
+      "owning_stack": "releasebot-edge"
+    },
+    {
+      "class": "cognito",
+      "name": "releasebot-dashboard-users",
+      "id": "us-east-1_OcviA4tZa",
+      "stack_owned": true,
+      "owning_stack": "releasebot-dashboard"
+    }
+  ]
+}

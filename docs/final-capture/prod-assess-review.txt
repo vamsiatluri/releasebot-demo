@@ -1,0 +1,168 @@
+
+Baseline: prod-assess
+  account 450315222669  region us-east-1  captured 2026-11-11 17:59 UTC
+  6 functions, 6 roles, 1 APIs, 10 log groups, 3 alarms
+
+  [BLOCKER] apigateway/releasebot
+             REGIONAL endpoint with NO resource policy — invocable by anyone on the internet
+             Every source on the internet can reach the endpoint and be rejected,
+             which still costs an invocation and a cold start before any signature is
+             checked. GitHub publishes 9 webhook CIDRs and Atlassian publishes its
+             egress ranges, so those paths are allowlistable today; Slack's are not,
+             which is why the signature -- not the network -- is the trust boundary.
+
+  [WARN   ] lambda/releasebot-dashboard-api
+             has no alias
+             Whatever invokes it is pointed at a mutable target, so there is no
+             one-step rollback. Adding an alias is additive and breaks nothing.
+
+  [WARN   ] lambda/slackApprove
+             has no alias
+             Whatever invokes it is pointed at a mutable target, so there is no
+             one-step rollback. Adding an alias is additive and breaks nothing.
+
+  [WARN   ] logs//aws/apigateway/welcome
+             never expires (110 B stored)
+             Created by Lambda rather than declared in a template, so it is owned by
+             no stack, survives the decommission, and keeps billing after the project
+             is finished.
+
+  [WARN   ] logs/API-Gateway-Execution-Logs_u4f22c74mi/prod
+             never expires (955.0 KB stored)
+             Created by Lambda rather than declared in a template, so it is owned by
+             no stack, survives the decommission, and keeps billing after the project
+             is finished.
+
+  [WARN   ] logs/API-Gateway-Execution-Logs_u4f22c74mi/test
+             never expires (955.8 KB stored)
+             Created by Lambda rather than declared in a template, so it is owned by
+             no stack, survives the decommission, and keeps billing after the project
+             is finished.
+
+  [WARN   ] apigateway/releasebot/test
+             no WAF web ACL on this stage
+             A web ACL associates with a stage, so this one has no rate limiting, no
+             managed rule groups, and no way to reject an unsigned request before it
+             reaches a function.
+
+  [WARN   ] alarm/releasebot-async-job-dropped
+             alarm notifies nobody
+             It will turn red on a dashboard and page no one. An alarm with no action
+             is decoration.
+
+  [INFO   ] lambda/cutReleaseTest
+             secrets held BY REFERENCE: GITHUB_TOKEN, JIRA_WEBHOOK_SECRET, SLACK_SIGNING_SECRET, SLACK_TOKEN
+             These hold an ssm:/secretsmanager: pointer resolved at INIT, not a
+             value, so the function configuration carries no credential and a
+             published version freezes a pointer rather than the secret. ⚠️
+             Rotation still takes effect only on the next cold start.
+
+  [INFO   ] lambda/cutReleaseTest
+             no reserved concurrency
+             Nothing caps how many copies can run at once. For a bot that writes to
+             source control, a retry storm is worth bounding.
+
+  [INFO   ] lambda/releasebot-dashboard-api
+             secrets held BY REFERENCE: GITHUB_TOKEN
+             These hold an ssm:/secretsmanager: pointer resolved at INIT, not a
+             value, so the function configuration carries no credential and a
+             published version freezes a pointer rather than the secret. ⚠️
+             Rotation still takes effect only on the next cold start.
+
+  [INFO   ] lambda/releasebot-dashboard-api
+             no reserved concurrency
+             Nothing caps how many copies can run at once. For a bot that writes to
+             source control, a retry storm is worth bounding.
+
+  [INFO   ] lambda/releasebot-dashboard-api
+             runtime is provided.al2
+             The previous generation. provided.al2023 is current and uses the same
+             contract. Worth a separate, approved change after the migration rather
+             than bundled into it.
+
+  [INFO   ] lambda/releaseAutomationMergeback
+             secrets held BY REFERENCE: GITHUB_TOKEN, JIRA_WEBHOOK_SECRET, SLACK_SIGNING_SECRET, SLACK_TOKEN
+             These hold an ssm:/secretsmanager: pointer resolved at INIT, not a
+             value, so the function configuration carries no credential and a
+             published version freezes a pointer rather than the secret. ⚠️
+             Rotation still takes effect only on the next cold start.
+
+  [INFO   ] lambda/releaseAutomationMergeback
+             no reserved concurrency
+             Nothing caps how many copies can run at once. For a bot that writes to
+             source control, a retry storm is worth bounding.
+
+  [INFO   ] lambda/releaseAutomationMergebackTest
+             secrets held BY REFERENCE: GITHUB_TOKEN, JIRA_WEBHOOK_SECRET, SLACK_SIGNING_SECRET, SLACK_TOKEN
+             These hold an ssm:/secretsmanager: pointer resolved at INIT, not a
+             value, so the function configuration carries no credential and a
+             published version freezes a pointer rather than the secret. ⚠️
+             Rotation still takes effect only on the next cold start.
+
+  [INFO   ] lambda/releaseAutomationMergebackTest
+             no reserved concurrency
+             Nothing caps how many copies can run at once. For a bot that writes to
+             source control, a retry storm is worth bounding.
+
+  [INFO   ] lambda/slackApprove
+             secrets held BY REFERENCE: GITHUB_APPROVAL_TOKEN, SLACK_SIGNING_SECRET
+             These hold an ssm:/secretsmanager: pointer resolved at INIT, not a
+             value, so the function configuration carries no credential and a
+             published version freezes a pointer rather than the secret. ⚠️
+             Rotation still takes effect only on the next cold start.
+
+  [INFO   ] lambda/slackApprove
+             no reserved concurrency
+             Nothing caps how many copies can run at once. For a bot that writes to
+             source control, a retry storm is worth bounding.
+
+  [INFO   ] lambda/slackApprove
+             runtime is provided.al2
+             The previous generation. provided.al2023 is current and uses the same
+             contract. Worth a separate, approved change after the migration rather
+             than bundled into it.
+
+  [INFO   ] lambda/cutRelease
+             secrets held BY REFERENCE: GITHUB_TOKEN, JIRA_WEBHOOK_SECRET, SLACK_SIGNING_SECRET, SLACK_TOKEN
+             These hold an ssm:/secretsmanager: pointer resolved at INIT, not a
+             value, so the function configuration carries no credential and a
+             published version freezes a pointer rather than the secret. ⚠️
+             Rotation still takes effect only on the next cold start.
+
+  [INFO   ] lambda/cutRelease
+             no reserved concurrency
+             Nothing caps how many copies can run at once. For a bot that writes to
+             source control, a retry storm is worth bounding.
+
+  [INFO   ] iam/releasebot-exec-cutrelease-test
+             carries inline policies: async-failure-destination, env-config, release-ledger, secrets, self-invoke
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  [INFO   ] iam/releasebot-dashboard-ApiRole-vChDsWd4AG15
+             carries inline policies: read-its-own-github-token, read-release-functions, read-release-ledger, read-the-controls
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  [INFO   ] iam/releasebot-exec-mergeback
+             carries inline policies: async-failure-destination, env-config, release-ledger, secrets, self-invoke
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  [INFO   ] iam/releasebot-exec-mergeback-test
+             carries inline policies: async-failure-destination, env-config, release-ledger, secrets, self-invoke
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  [INFO   ] iam/releasebot-slack-approve-ExecutionRole-EKj0FmVABQSD
+             carries inline policies: read-its-own-secrets
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  [INFO   ] iam/releasebot-exec-cutrelease
+             carries inline policies: async-failure-destination, env-config, release-ledger, secrets, self-invoke
+             Inline policy on a stack-owned role is already in a template; recorded
+             so the target account can be checked against it.
+
+  1 blockers, 7 warnings, 20 informational
+

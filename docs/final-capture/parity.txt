@@ -1,0 +1,115 @@
+
+Comparing
+  A: prod-demo (account 826653639065)
+  B: prod-assess (account 450315222669)
+
+  [BLOCKER] lambda/cutRelease  —  runtime
+            A: provided.al2
+            B: provided.al2023
+
+  [BLOCKER] lambda/cutRelease  —  code sha256
+            A: exVwAcWGvkZKOCYvF59rQFNAO8l/rZl4HTFyj5zDTwc=
+            B: oPLw3mnZORKHn6V3sTNm7iiKNVpV68ZdsDMOJPa+jSE=
+
+  [BLOCKER] lambda/cutReleaseTest  —  runtime
+            A: provided.al2
+            B: provided.al2023
+
+  [BLOCKER] lambda/cutReleaseTest  —  code sha256
+            A: exVwAcWGvkZKOCYvF59rQFNAO8l/rZl4HTFyj5zDTwc=
+            B: I816HILw+ffc1rDcUqBFX/NgRy98O02Peck2W6pnL7c=
+
+  [BLOCKER] lambda/releaseAutomationMergeback  —  runtime
+            A: provided.al2
+            B: provided.al2023
+
+  [BLOCKER] lambda/releaseAutomationMergeback  —  code sha256
+            A: E/c5nLLzUFdp7duq+DWXJ1NiZOep6xvoMP5EgC1Dz+A=
+            B: 0PB4h9zjqgq4NZD2oswlNO3SFT/UTpgGZYtEjy3KG+4=
+
+  [BLOCKER] lambda/releaseAutomationMergebackTest  —  runtime
+            A: provided.al2
+            B: provided.al2023
+
+  [BLOCKER] lambda/releaseAutomationMergebackTest  —  code sha256
+            A: E/c5nLLzUFdp7duq+DWXJ1NiZOep6xvoMP5EgC1Dz+A=
+            B: aAoEHm9mZ6QMM9aMoFRAgT1n1KxeD/ktLPJSB9u4vsw=
+
+  [BLOCKER] lambda/releasebot-dashboard-api  —  code sha256
+            A: YaR+g/sS9gP0yBPhjzIfbhzZBLmVHCcgLWoezkisUhI=
+            B: bJ9UAhsPo79Z0bkiLIsm+OHtR6lKAv58WMWyZwHmt+I=
+
+  [BLOCKER] lambda/slackApprove  —  code sha256
+            A: p/1+Gojc0cvEtHnJtfUYZiOLJJsE+c/4MAeFuTPrHFI=
+            B: MfYt5qpCMM9fHKSEbinlJL7i3JuNoua/lZIj4LEnfLw=
+
+  [WARN   ] lambda/cutRelease  —  reserved concurrency
+            A: 5
+            B: unset
+
+  [WARN   ] lambda/cutReleaseTest  —  reserved concurrency
+            A: 2
+            B: unset
+
+  [WARN   ] lambda/releaseAutomationMergeback  —  reserved concurrency
+            A: 5
+            B: unset
+
+  [WARN   ] lambda/releaseAutomationMergebackTest  —  reserved concurrency
+            A: 2
+            B: unset
+
+  [WARN   ] lambda/slackApprove  —  reserved concurrency
+            A: 2
+            B: unset
+
+  [WARN   ] logs//aws/lambda/cutRelease  —  retention days
+            A: 7 days
+            B: 30 days
+
+  [WARN   ] logs//aws/lambda/cutReleaseTest  —  retention days
+            A: 7 days
+            B: 30 days
+
+  [WARN   ] logs//aws/lambda/releaseAutomationMergeback  —  retention days
+            A: 7 days
+            B: 30 days
+
+  [WARN   ] logs//aws/lambda/releaseAutomationMergebackTest  —  retention days
+            A: 7 days
+            B: 30 days
+
+  [INFO   ] logs//aws/lambda/releasebot-egress-probe-45214  —  exists
+            A: present
+            B: absent
+
+  [INFO   ] logs//aws/lambda/releasebot-ghprobe  —  exists
+            A: present
+            B: absent
+
+  [INFO   ] logs//aws/lambda/releasebot-goprobe  —  exists
+            A: present
+            B: absent
+
+  [INFO   ] logs//aws/lambda/releasebot-netprobe  —  exists
+            A: present
+            B: absent
+
+  [INFO   ] logs/API-Gateway-Execution-Logs_0aohv0kx5k/prod  —  exists
+            A: present
+            B: absent
+
+  [INFO   ] logs/API-Gateway-Execution-Logs_0aohv0kx5k/test  —  exists
+            A: present
+            B: absent
+
+  [INFO   ] logs/API-Gateway-Execution-Logs_u4f22c74mi/prod  —  exists
+            A: absent
+            B: present
+
+  [INFO   ] logs/API-Gateway-Execution-Logs_u4f22c74mi/test  —  exists
+            A: absent
+            B: present
+
+  27 differences, 10 of them blockers.
+
